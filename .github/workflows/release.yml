@@ -110,13 +110,23 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ matrix.ndk }}
 
-      - name: Setup Android signing (optional)
-        if: matrix.android == true && env.KEYSTORE_BASE64 != ''
+      - name: Setup Android signing
+        if: matrix.android == true
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d \
-            > toloo-app/src-tauri/gen/android/app/keystore.jks
+          KS=toloo-app/src-tauri/gen/android/app/keystore.jks
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KS"
+          else
+            keytool -genkey -noprompt -keystore "$KS" \
+              -alias toloo -keyalg RSA -keysize 2048 -validity 3650 \
+              -storepass android -keypass android \
+              -dname "CN=Toloo,O=IranDawn,C=IR"
+            echo "KEYSTORE_PASSWORD=android" >> $GITHUB_ENV
+            echo "KEY_ALIAS=toloo"           >> $GITHUB_ENV
+            echo "KEY_PASSWORD=android"      >> $GITHUB_ENV
+          fi
 
       # ── Windows: cache Tauri's downloaded bundler tools (WiX, NSIS) ──
       - name: Cache Tauri bundler tools
@@ -403,12 +413,21 @@ jobs:
           EOF
           printf 'org.gradle.jvmargs=-Xmx2048m\nandroid.useAndroidX=true\n' > legacy/gradle.properties
 
-      - name: Setup signing (optional)
-        if: ${{ env.KEYSTORE_BASE64 != '' }}
+      - name: Setup signing
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > legacy/app/keystore.jks
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > legacy/app/keystore.jks
+          else
+            keytool -genkey -noprompt -keystore legacy/app/keystore.jks \
+              -alias toloo -keyalg RSA -keysize 2048 -validity 3650 \
+              -storepass android -keypass android \
+              -dname "CN=Toloo,O=IranDawn,C=IR"
+            echo "KEYSTORE_PASSWORD=android" >> $GITHUB_ENV
+            echo "KEY_ALIAS=toloo"           >> $GITHUB_ENV
+            echo "KEY_PASSWORD=android"      >> $GITHUB_ENV
+          fi
           cat >> legacy/app/build.gradle << 'EOF'
           android {
               signingConfigs { release {
