@@ -10,10 +10,28 @@ permissions:
 jobs:
 
   # ────────────────────────────────────────────────────────────────────
+  # Check whether Android signing secrets are configured.
+  # secrets context is unavailable in job-level `if`, so we expose it
+  # as a safe output that downstream jobs can reference via `needs`.
+  # ────────────────────────────────────────────────────────────────────
+  check-signing:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          KEY: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          [ -n "$KEY" ] && echo "enabled=true" >> $GITHUB_OUTPUT \
+                        || echo "enabled=false" >> $GITHUB_OUTPUT
+
+  # ────────────────────────────────────────────────────────────────────
   # All native builds — Linux, Windows, Android — in one parallel matrix
   # ────────────────────────────────────────────────────────────────────
   build:
     name: Build (${{ matrix.artifact }})
+    needs: check-signing
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -111,7 +129,7 @@ jobs:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ matrix.ndk }}
 
       - name: Setup Android signing
-        if: matrix.android == true && secrets.KEYSTORE_BASE64 != ''
+        if: matrix.android == true && needs.check-signing.outputs.enabled == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
@@ -141,7 +159,7 @@ jobs:
           exit 1
 
       - name: Build (Android)
-        if: matrix.android == true && secrets.KEYSTORE_BASE64 != ''
+        if: matrix.android == true && needs.check-signing.outputs.enabled == 'true'
         run: cargo tauri android build --apk
         working-directory: toloo-app
         env:
@@ -169,14 +187,14 @@ jobs:
             -exec cp {} dist/ \;
 
       - name: Collect artifacts (Android)
-        if: matrix.android == true && secrets.KEYSTORE_BASE64 != ''
+        if: matrix.android == true && needs.check-signing.outputs.enabled == 'true'
         run: |
           mkdir -p dist
           find toloo-app/src-tauri/gen/android/app/build/outputs/apk \
             -name "*.apk" -exec cp {} dist/ \;
 
       - uses: actions/upload-artifact@v4
-        if: matrix.android == false || secrets.KEYSTORE_BASE64 != ''
+        if: matrix.android == false || needs.check-signing.outputs.enabled == 'true'
         with:
           name: ${{ matrix.artifact }}
           path: dist/
@@ -282,7 +300,8 @@ jobs:
   # ────────────────────────────────────────────────────────────────────
   build-android-legacy:
     name: Build (android-legacy-api21)
-    if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+    needs: check-signing
+    if: needs.check-signing.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     env:
       APP_ID:   com.irandawn.toloo
@@ -454,7 +473,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────
   release:
     name: Create Release
-    needs: [build, build-cli, build-android-legacy]
+    needs: [check-signing, build, build-cli, build-android-legacy]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
