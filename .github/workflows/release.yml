@@ -111,22 +111,12 @@ jobs:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ matrix.ndk }}
 
       - name: Setup Android signing
-        if: matrix.android == true
+        if: matrix.android == true && secrets.KEYSTORE_BASE64 != ''
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          KS=toloo-app/src-tauri/gen/android/app/keystore.jks
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$KS"
-          else
-            keytool -genkey -noprompt -keystore "$KS" \
-              -alias toloo -keyalg RSA -keysize 2048 -validity 3650 \
-              -storepass android -keypass android \
-              -dname "CN=Toloo,O=IranDawn,C=IR"
-            echo "KEYSTORE_PASSWORD=android" >> $GITHUB_ENV
-            echo "KEY_ALIAS=toloo"           >> $GITHUB_ENV
-            echo "KEY_PASSWORD=android"      >> $GITHUB_ENV
-          fi
+          echo "$KEYSTORE_BASE64" | base64 -d \
+            > toloo-app/src-tauri/gen/android/app/keystore.jks
 
       # ── Windows: cache Tauri's downloaded bundler tools (WiX, NSIS) ──
       - name: Cache Tauri bundler tools
@@ -151,7 +141,7 @@ jobs:
           exit 1
 
       - name: Build (Android)
-        if: matrix.android == true
+        if: matrix.android == true && secrets.KEYSTORE_BASE64 != ''
         run: cargo tauri android build --apk
         working-directory: toloo-app
         env:
@@ -179,16 +169,18 @@ jobs:
             -exec cp {} dist/ \;
 
       - name: Collect artifacts (Android)
-        if: matrix.android == true
+        if: matrix.android == true && secrets.KEYSTORE_BASE64 != ''
         run: |
           mkdir -p dist
           find toloo-app/src-tauri/gen/android/app/build/outputs/apk \
             -name "*.apk" -exec cp {} dist/ \;
 
       - uses: actions/upload-artifact@v4
+        if: matrix.android == false || secrets.KEYSTORE_BASE64 != ''
         with:
           name: ${{ matrix.artifact }}
           path: dist/
+          if-no-files-found: ignore
 
   # ────────────────────────────────────────────────────────────────────
   # CLI builds — Linux (static musl) + Windows (static CRT)
@@ -290,6 +282,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────
   build-android-legacy:
     name: Build (android-legacy-api21)
+    if: ${{ secrets.KEYSTORE_BASE64 != '' }}
     runs-on: ubuntu-latest
     env:
       APP_ID:   com.irandawn.toloo
@@ -417,17 +410,7 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > legacy/app/keystore.jks
-          else
-            keytool -genkey -noprompt -keystore legacy/app/keystore.jks \
-              -alias toloo -keyalg RSA -keysize 2048 -validity 3650 \
-              -storepass android -keypass android \
-              -dname "CN=Toloo,O=IranDawn,C=IR"
-            echo "KEYSTORE_PASSWORD=android" >> $GITHUB_ENV
-            echo "KEY_ALIAS=toloo"           >> $GITHUB_ENV
-            echo "KEY_PASSWORD=android"      >> $GITHUB_ENV
-          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > legacy/app/keystore.jks
           cat >> legacy/app/build.gradle << 'EOF'
           android {
               signingConfigs { release {
