@@ -137,11 +137,56 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          # 1. Decode keystore into the app module directory
           echo "$KEYSTORE_BASE64" | base64 -d \
             > toloo-app/src-tauri/gen/android/app/keystore.jks
+
+          # 2. Create keystore.properties (Tauri convention)
           printf 'storeFile=keystore.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
             "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" \
-            > toloo-app/src-tauri/gen/android/key.properties
+            > toloo-app/src-tauri/gen/android/keystore.properties
+
+          # 3. Patch build.gradle.kts to read keystore.properties and sign the release APK
+          python3 << 'PYEOF'
+          import re, pathlib
+
+          gradle = pathlib.Path("toloo-app/src-tauri/gen/android/app/build.gradle.kts")
+          src = gradle.read_text()
+
+          # Add import if missing
+          if "import java.io.FileInputStream" not in src:
+              src = "import java.io.FileInputStream\n" + src
+
+          # Insert signingConfigs block right before buildTypes
+          signing = "\n".join([
+              "",
+              "    signingConfigs {",
+              '        create("release") {',
+              '            val keystorePropertiesFile = rootProject.file("keystore.properties")',
+              "            val keystoreProperties = java.util.Properties()",
+              "            if (keystorePropertiesFile.exists()) {",
+              "                keystoreProperties.load(FileInputStream(keystorePropertiesFile))",
+              "            }",
+              '            keyAlias = keystoreProperties["keyAlias"] as String',
+              '            keyPassword = keystoreProperties["keyPassword"] as String',
+              '            storeFile = file(keystoreProperties["storeFile"] as String)',
+              '            storePassword = keystoreProperties["storePassword"] as String',
+              "        }",
+              "    }",
+              "",
+          ])
+          src = re.sub(r'(\n(\s*)buildTypes\s*\{)', signing + r'\1', src, count=1)
+
+          # Add signingConfig to the release buildType
+          src = re.sub(
+              r'(getByName\("release"\)\s*\{)',
+              r'\1\n            signingConfig = signingConfigs.getByName("release")',
+              src, count=1,
+          )
+
+          gradle.write_text(src)
+          print("build.gradle.kts patched for release signing")
+          PYEOF
 
       # ── Windows: cache Tauri's downloaded bundler tools (WiX, NSIS) ──
       - name: Cache Tauri bundler tools
@@ -171,9 +216,6 @@ jobs:
         working-directory: toloo-app
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ matrix.ndk }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD:      ${{ secrets.KEY_PASSWORD }}
 
       # ── Collect artifacts ─────────────────────────────────────────
       - name: Collect artifacts (Linux)
