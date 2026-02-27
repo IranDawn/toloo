@@ -108,19 +108,11 @@ natively on Linux, Windows, and macOS with no system libraries required.
 | Platform | Minimum | Binary | Notes |
 |---|---|---|---|
 | Linux x86_64 | Kernel 2.6.39 (Ubuntu 12.04+) | static musl | Zero system deps — copy and run on any distro |
+| Linux ARM64 | Kernel 3.x+ | static musl | Raspberry Pi, Ampere, AWS Graviton — cross-compiled with zig |
 | Windows x86_64 | Windows 10 | `.exe` (static CRT) | No MSVC redistributable required |
 | Windows ARM64 | Windows 10 on ARM | `.exe` (static CRT) | Surface / Snapdragon |
 | macOS x86_64 | 10.15 Catalina | binary | No Xcode needed — pure Rust, built on `macos-latest` |
 | macOS ARM64 | 11.0 Big Sur | binary | Apple Silicon, no Xcode needed |
-
-### Android legacy APK (WebView wrapper)
-
-A second Android APK is built via plain Gradle, wrapping the web assets in a system
-WebView. It has no Rust backend — it connects to external relays over WebSocket/HTTP.
-
-| Minimum | Notes |
-|---|---|
-| API 21 / Android 5.0 (2014) | Uses system WebView. Features requiring the native backend (hosting a relay, key generation offline) are unavailable. Once `toloo-js` is complete this build will use those assets. |
 
 ---
 
@@ -145,10 +137,15 @@ cargo test                     # all unit + integration tests
 CLI — platform-specific static builds:
 
 ```sh
-# Linux: fully static musl binary (runs on any Linux, kernel 2.6.39+)
+# Linux x86_64: fully static musl binary (runs on any Linux, kernel 2.6.39+)
 rustup target add x86_64-unknown-linux-musl
 sudo apt-get install -y musl-tools
 cargo build -p toloo-cli --release --target x86_64-unknown-linux-musl
+
+# Linux ARM64: static musl, cross-compiled with zig (Raspberry Pi, Graviton, etc.)
+rustup target add aarch64-unknown-linux-musl
+pip3 install ziglang cargo-zigbuild
+cargo zigbuild -p toloo-cli --release --target aarch64-unknown-linux-musl
 
 # Windows: static CRT — .exe runs on any Win10+ with no redistributables
 # (run this from a Windows machine or windows-latest CI runner)
@@ -250,17 +247,17 @@ targets in parallel and creates a GitHub Release:
 |---|---|---|
 | `build (linux-x86_64)` | ubuntu-latest | `.deb`, `.AppImage`, `.rpm` |
 | `build (windows-x86_64)` | windows-latest | `.msi`, `.exe` (app installer) |
-| `build (windows-aarch64)` | windows-latest | `.msi`, `.exe` (ARM64 app installer) |
-| `build (android-tauri)` | ubuntu-latest | per-ABI `.apk` files (API 24+) |
+| `build (windows-aarch64)` | windows-latest | `.msi` (ARM64 app installer) |
+| `build (android-tauri)` | ubuntu-latest | signed per-ABI `.apk` files (API 24+) |
 | `build-cli (cli-linux-x86_64)` | ubuntu-latest | static musl binary |
+| `build-cli (cli-linux-aarch64)` | ubuntu-latest | static musl binary (ARM64, zig cross) |
 | `build-cli (cli-windows-x86_64)` | windows-latest | `.exe` (static CRT) |
 | `build-cli (cli-windows-aarch64)` | windows-latest | `.exe` ARM64 (static CRT) |
 | `build-cli (cli-macos-x86_64)` | macos-latest | macOS binary (x86_64) |
 | `build-cli (cli-macos-aarch64)` | macos-latest | macOS binary (Apple Silicon) |
-| `build-android-legacy` | ubuntu-latest | WebView `.apk` (API 21+) |
 
-APK signing is opt-in via repository secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`,
-`KEY_ALIAS`, `KEY_PASSWORD`.
+Android APKs are only produced when signing secrets are configured: `KEYSTORE_BASE64`,
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`. Unsigned APKs are never published.
 
 ---
 
@@ -376,6 +373,8 @@ The commit can happen directly (relay holds the room key) or via a relay chain
 Native mobile support (Android / iOS) is planned via `toloo-ffi`, which will
 expose `toloo-core` and `toloo-lib` through [uniffi](https://github.com/mozilla/uniffi-rs)
 bindings consumable by Kotlin and Swift. This is not yet implemented — the
-`toloo-ffi` crate is a placeholder. The current mobile story is Tauri (Android
-and iOS builds are possible with `cargo tauri android/ios build` once the FFI
-crate is ready).
+`toloo-ffi` crate is a placeholder.
+
+**Current mobile story**: Android APKs are built in CI via `cargo tauri android build`,
+producing signed per-ABI APKs (ARM64 and ARMv7) with the full Rust backend. iOS builds
+are possible with `cargo tauri ios build` on a macOS runner but are not in current CI.
