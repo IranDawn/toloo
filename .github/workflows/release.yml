@@ -188,6 +188,37 @@ jobs:
           printf '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#0a0a0a</color>\n</resources>\n' \
             > ${RES}/values/ic_launcher_colors.xml
 
+      - name: Patch MainActivity — respect system bar insets
+        if: matrix.android == 'tauri'
+        run: |
+          python3 - << 'PYEOF'
+          import pathlib
+          main = pathlib.Path("toloo-app/src-tauri/gen/android/app/src/main/kotlin/com/irandawn/toloo/MainActivity.kt")
+          main.write_text("\n".join([
+              "package com.irandawn.toloo",
+              "",
+              "import android.os.Bundle",
+              "import androidx.core.view.ViewCompat",
+              "import androidx.core.view.WindowInsetsCompat",
+              "import app.tauri.TauriActivity",
+              "",
+              "class MainActivity : TauriActivity() {",
+              "    override fun onCreate(savedInstanceState: Bundle?) {",
+              "        super.onCreate(savedInstanceState)",
+              "        // Pad the root view by the actual system bar heights so content",
+              "        // never draws under the status bar or navigation bar.",
+              "        // Works on API 24-34 and on Android 15+ where edge-to-edge is enforced.",
+              "        ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { view, windowInsets ->",
+              "            val bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())",
+              "            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)",
+              "            WindowInsetsCompat.CONSUMED",
+              "        }",
+              "    }",
+              "}",
+              "",
+          ]))
+          PYEOF
+
       - name: Setup Tauri Android signing
         if: matrix.android == 'tauri' && needs.check-android-signing.outputs.android == 'true'
         env:
