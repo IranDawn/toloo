@@ -118,11 +118,27 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d \
             > toloo-app/src-tauri/gen/android/app/keystore.jks
 
+      # ── Windows: cache Tauri's downloaded bundler tools (WiX, NSIS) ──
+      - name: Cache Tauri bundler tools
+        if: matrix.os == 'windows-latest' && matrix.android == false
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-bundler-tools
+
       # ── Build ──────────────────────────────────────────────────────
       - name: Build (desktop)
         if: matrix.android == false
-        run: cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        shell: bash
         working-directory: toloo-app
+        run: |
+          # Retry up to 3 times — WiX/NSIS downloads from GitHub releases
+          # are occasionally flaky and fail with "Peer disconnected".
+          for attempt in 1 2 3; do
+            cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} && exit 0
+            [ $attempt -lt 3 ] && echo "Attempt $attempt failed, retrying in 30s..." && sleep 30
+          done
+          exit 1
 
       - name: Build (Android)
         if: matrix.android == true
@@ -437,6 +453,7 @@ jobs:
   release:
     name: Create Release
     needs: [build, build-cli, build-android-legacy]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
