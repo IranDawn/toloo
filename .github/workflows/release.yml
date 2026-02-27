@@ -36,7 +36,7 @@ jobs:
           # ── Windows ARM64 (Surface / Snapdragon) ──────────────────
           - os: windows-latest
             target: aarch64-pc-windows-msvc
-            bundles: msi,nsis
+            bundles: msi
             artifact: windows-aarch64
             android: false
 
@@ -98,8 +98,9 @@ jobs:
             i686-linux-android
 
       # ── Tauri CLI (all targets) ────────────────────────────────────
+      - uses: cargo-bins/cargo-binstall@main
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2" --locked
+        run: cargo binstall --no-confirm tauri-cli --version "^2"
 
       # ── Android init ──────────────────────────────────────────────
       - name: Init Android project

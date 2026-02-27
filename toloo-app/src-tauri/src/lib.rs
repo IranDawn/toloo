@@ -445,7 +445,7 @@ mod commands {
     /// When present the request body is wrapped in per-request ECDH+AEAD and the
     /// response is decrypted before envelope parsing.
     async fn pool_exchange_http(url: &str, request_json: &str) -> Result<Vec<String>, String> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::AsyncWriteExt;
         use toloo_core::{base64url, crypto};
 
         // Split off query string before further URL parsing.
