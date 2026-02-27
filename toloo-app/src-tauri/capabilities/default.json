@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Default Toloo app capabilities",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

@@ -1,0 +1,27 @@
+[package]
+name = "toloo-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Toloo Protocol v0.2 — CLI binary"
+
+[[bin]]
+name = "toloo"
+path = "src/main.rs"
+
+[dependencies]
+toloo-core = { path = "../toloo-core" }
+toloo-lib  = { path = "../toloo-lib" }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Async runtime and networking
+tokio             = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util      = "0.3"
+
+# Encoding / serialization
+serde_json = "1"
+
+# Error handling
+anyhow = "1"

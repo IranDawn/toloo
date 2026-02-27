@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "toloo-core",
+    "toloo-lib",
+    "toloo-cli",
+    "toloo-ffi",
+    "toloo-app/src-tauri",
+]
+resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

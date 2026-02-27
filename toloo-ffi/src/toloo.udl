@@ -1,0 +1,159 @@
+// Toloo Protocol v0.2 — uniffi interface definition
+//
+// All envelope values cross the boundary as canonical JSON strings.
+// Node/room identities are passed as JSON strings of the form:
+//   node: {"sig":{"pub_key":"...","priv_key":"..."},"enc":{"pub_key":"...","priv_key":"..."}}
+//   room: {"sig":{"pub_key":"...","priv_key":"..."}}
+//
+// This avoids mapping the full DatumBody type tree across the FFI boundary
+// and lets mobile apps parse/store envelopes natively.
+
+namespace toloo {
+
+    // ---- Key generation ----
+
+    [Throws=TolooError]
+    NodeIdentity keygen();
+
+    [Throws=TolooError]
+    RoomIdentity room_keygen();
+
+    // ---- Node events ----
+
+    [Throws=TolooError]
+    string make_node_meta(string node_json);
+
+    // ---- Room lifecycle ----
+
+    // Returns the committed (depth-2) envelope JSON.
+    [Throws=TolooError]
+    string make_room_create(string node_json, string room_json, string? name, string? rules_json);
+
+    [Throws=TolooError]
+    string make_room_update(string node_json, string room_json, string? name, string? rules_json);
+
+    [Throws=TolooError]
+    string make_room_join(string node_json, string room_pub);
+
+    [Throws=TolooError]
+    string make_room_join_pow(string node_json, string room_pub, u32 required_bits);
+
+    [Throws=TolooError]
+    string make_room_leave(string node_json, string room_pub);
+
+    [Throws=TolooError]
+    string make_room_invite(string node_json, string room_pub, string invitee_pub);
+
+    [Throws=TolooError]
+    string make_room_ban(string node_json, string room_pub, string target_pub);
+
+    [Throws=TolooError]
+    string make_room_unban(string node_json, string room_pub, string target_pub);
+
+    // ---- Room content ----
+
+    [Throws=TolooError]
+    string make_room_message(string node_json, string room_pub, i32 channel, string body, sequence<string> blobs);
+
+    [Throws=TolooError]
+    string make_room_react(string node_json, string room_pub, i32 channel, string target_eid, string emoji);
+
+    [Throws=TolooError]
+    string make_room_edit(string node_json, string room_pub, i32 channel, string target_eid, string body);
+
+    [Throws=TolooError]
+    string make_room_delete(string node_json, string room_pub, i32 channel, string target_eid);
+
+    // ---- Private messages ----
+
+    [Throws=TolooError]
+    string make_private_message(string node_json, string to_pub, string to_enc_pub, string body, sequence<string> blobs);
+
+    [Throws=TolooError]
+    string make_private_read(string node_json, string to_pub, sequence<string> ids);
+
+    // ---- Envelope verification ----
+
+    // Verifies the full signature chain. Throws on any failure.
+    [Throws=TolooError]
+    void verify_envelope(string envelope_json);
+
+    // Returns the stable event ID (eid) of the innermost envelope.
+    [Throws=TolooError]
+    string envelope_eid(string envelope_json);
+
+    // Returns the SHA-256 datum ID (hex) of the outermost envelope.
+    [Throws=TolooError]
+    string envelope_datum_id(string envelope_json);
+
+    // Returns the depth of the envelope (1, 2, or 3).
+    [Throws=TolooError]
+    u8 envelope_depth(string envelope_json);
+
+    // ---- Private message crypto (low-level) ----
+
+    [Throws=TolooError]
+    PrivateCiphertext encrypt_private(string content_json, string recipient_enc_pub);
+
+    [Throws=TolooError]
+    string decrypt_private(PrivateCiphertext ciphertext, string enc_priv);
+
+    // ---- Discovery ----
+
+    // Encode envelopes as a toloo: URI (dot-separated base64url segments).
+    [Throws=TolooError]
+    string encode_uri(sequence<string> envelope_jsons);
+
+    // Encode envelopes as a .toloo file (newline-separated base64url lines).
+    [Throws=TolooError]
+    string encode_file(sequence<string> envelope_jsons);
+
+    // Decode either a toloo: URI or .toloo file content.
+    // Returns list of verified envelope JSON strings.
+    [Throws=TolooError]
+    sequence<string> decode(string input);
+
+    // ---- Utilities ----
+
+    // Canonicalize a JSON string (RFC 8785 — sorted keys, no whitespace).
+    [Throws=TolooError]
+    string canonical_json(string json);
+
+    [Throws=TolooError]
+    string base64url_encode(bytes data);
+
+    [Throws=TolooError]
+    bytes base64url_decode(string encoded);
+};
+
+// ---- Data types ----
+
+dictionary Keypair {
+    string pub_key;
+    string priv_key;
+};
+
+dictionary NodeIdentity {
+    Keypair sig;
+    Keypair enc;
+};
+
+dictionary RoomIdentity {
+    Keypair sig;
+};
+
+dictionary PrivateCiphertext {
+    string eph;
+    string encrypted;
+};
+
+// ---- Errors ----
+
+[Error]
+interface TolooError {
+    InvalidInput(string message);
+    CryptoError(string message);
+    VerificationFailed(string message);
+    DecryptionFailed(string message);
+    ParseError(string message);
+};

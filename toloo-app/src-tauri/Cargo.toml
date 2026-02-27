@@ -1,0 +1,32 @@
+[package]
+name = "toloo-app"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "toloo_app_lib"
+# rlib  = desktop (default)
+# cdylib + staticlib added by `tauri android/ios build` at mobile build time
+crate-type = ["rlib"]
+
+[[bin]]
+name = "toloo-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+toloo-core = { path = "../../toloo-core" }
+toloo-lib  = { path = "../../toloo-lib" }
+rusqlite   = { version = "0.31", features = ["bundled"] }
+
+tauri        = { version = "2" }
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+anyhow       = "1"
+tokio        = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+tokio-rustls      = "0.26"
+rustls            = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+futures-util = "0.3"

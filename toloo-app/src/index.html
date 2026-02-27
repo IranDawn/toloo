@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Toloo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ─── Sidebar ─── -->
+  <aside id="sidebar">
+
+    <div id="sidebar-header">
+      <button id="btn-identity" class="avatar-btn" title="Identity &amp; Settings">
+        <!-- shown when no identity loaded -->
+        <svg id="no-id-icon" viewBox="0 0 24 24" width="20" height="20"
+             fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="8" r="4"/>
+          <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+        </svg>
+        <!-- shown after identity loaded (jdenticon renders here) -->
+        <svg id="my-avatar" width="36" height="36"
+             data-jdenticon-value="" class="hidden"></svg>
+      </button>
+
+      <span id="brand">Toloo</span>
+
+      <button id="btn-import-global" class="icon-btn" title="Import (toloo:// or .toloo file)" aria-label="Import">
+        <!-- inbox / import icon -->
+        <svg viewBox="0 0 24 24" width="18" height="18"
+             fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/>
+          <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>
+        </svg>
+      </button>
+
+      <button id="btn-new-chat" class="icon-btn" title="New room" aria-label="Add room">
+        <svg viewBox="0 0 24 24" width="18" height="18"
+             fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+      </button>
+    </div>
+
+    <div id="search-wrap">
+      <input id="search-input" type="search" placeholder="Search…" autocomplete="off" />
+    </div>
+
+    <div id="rooms-list" role="list"></div>
+    <div id="no-rooms-hint" class="hint-text">Add a room with the <strong>+</strong> button above.</div>
+
+    <!-- Network status footer -->
+    <div id="network-footer">
+      <div id="net-summary">No relays running</div>
+      <button id="btn-manage-relays" class="icon-btn" title="Manage relays" aria-label="Relays">
+        <!-- antenna icon -->
+        <svg viewBox="0 0 24 24" width="18" height="18"
+             fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12.55a11 11 0 0 1 14.08 0"/>
+          <path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/>
+          <circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
+    </div>
+
+  </aside>
+
+  <!-- ─── Main chat area ─── -->
+  <main id="main">
+
+    <!-- Welcome / no room selected -->
+    <div id="welcome">
+      <svg viewBox="0 0 64 64" width="64" height="64"
+           fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" opacity="0.25">
+        <path d="M55 8H9a4 4 0 0 0-4 4v28a4 4 0 0 0 4 4h10l13 10 13-10h10a4 4 0 0 0 4-4V12a4 4 0 0 0-4-4z"/>
+        <circle cx="22" cy="26" r="2.5" fill="currentColor" stroke="none"/>
+        <circle cx="32" cy="26" r="2.5" fill="currentColor" stroke="none"/>
+        <circle cx="42" cy="26" r="2.5" fill="currentColor" stroke="none"/>
+      </svg>
+      <p>Select a room to start chatting</p>
+    </div>
+
+    <!-- Chat view (hidden until a room is selected) -->
+    <div id="chat-view" class="hidden">
+
+      <div id="chat-header">
+        <button id="btn-back" class="icon-btn" aria-label="Back">
+          <svg viewBox="0 0 24 24" width="20" height="20"
+               fill="none" stroke="currentColor" stroke-width="2.5"
+               stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+
+        <div id="chat-avatar-wrap"></div>
+
+        <div id="chat-header-info">
+          <div id="chat-name"></div>
+          <div id="chat-key" class="monospace"></div>
+        </div>
+
+        <button id="btn-sync" class="icon-btn" title="Sync messages" aria-label="Sync">
+          <svg viewBox="0 0 24 24" width="18" height="18"
+               fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+        </button>
+
+        <!-- Share invite link -->
+        <button id="btn-share" class="icon-btn" title="Share room invite" aria-label="Share">
+          <svg viewBox="0 0 24 24" width="18" height="18"
+               fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/>
+            <circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+        </button>
+
+        <!-- Export messages as .toloo file -->
+        <button id="btn-export" class="icon-btn" title="Export messages (.toloo)" aria-label="Export">
+          <svg viewBox="0 0 24 24" width="18" height="18"
+               fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
+      </div>
+
+      <div id="messages-list" role="log" aria-live="polite"></div>
+
+      <form id="compose-form" novalidate>
+        <input id="compose-input" type="text"
+               placeholder="Message…" autocomplete="off" spellcheck="true" />
+        <button type="submit" id="btn-send" aria-label="Send">
+          <svg viewBox="0 0 24 24" width="18" height="18"
+               fill="none" stroke="none" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="22 2 15 22 11 13 2 9 22 2" fill="currentColor"/>
+          </svg>
+        </button>
+      </form>
+
+    </div>
+  </main>
+
+</div><!-- /#app -->
+
+<!-- ─── Overlay backdrop + modal sheets ─── -->
+<div id="overlay" class="hidden" role="dialog" aria-modal="true">
+
+  <!-- Identity & Settings sheet -->
+  <div id="identity-modal" class="sheet hidden">
+    <div class="sheet-handle"></div>
+
+    <div class="sheet-header">
+      <h2>Identity &amp; Settings</h2>
+      <button class="btn-close" data-close="identity-modal" aria-label="Close">✕</button>
+    </div>
+
+    <div id="no-identity-section" class="sheet-body">
+      <p class="hint-text" style="text-align:start; padding:0 0 6px">No identity loaded. Generate one to start.</p>
+      <div class="btn-col">
+        <button id="btn-keygen">Generate New Identity</button>
+        <button id="btn-load-identity" class="secondary">Load from File…</button>
+      </div>
+    </div>
+
+    <div id="has-identity-section" class="sheet-body hidden">
+      <div class="identity-row">
+        <div id="id-avatar-wrap" class="identity-avatar"></div>
+        <div id="my-pubkey" class="monospace break-all"></div>
+      </div>
+      <div class="btn-row">
+        <button id="btn-save-identity" class="secondary">Save JSON</button>
+        <button id="btn-clear-identity" class="danger">Remove</button>
+      </div>
+    </div>
+
+    <div class="sheet-section">
+      <label>Connected Relays</label>
+      <!-- Populated by renderRelayUrls() -->
+      <div id="relay-url-list"></div>
+      <!-- Quick-add chips for locally running ws/wss relays not yet in the list -->
+      <div id="relay-url-suggestions" class="hidden"></div>
+      <div class="relay-url-add-row">
+        <input id="relay-url-input" type="text"
+               placeholder="ws://127.0.0.1:17701" inputmode="url"
+               autocomplete="off" autocorrect="off" spellcheck="false" />
+        <button id="btn-relay-url-add" class="secondary small">Add</button>
+      </div>
+    </div>
+
+    <div class="sheet-section">
+      <label>Layout direction</label>
+      <div class="segmented-control">
+        <button data-dir="ltr">← LTR (English)</button>
+        <button data-dir="rtl">RTL → (فارسی)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import sheet (global — handles rooms, messages, relay endpoints) -->
+  <div id="import-modal" class="sheet hidden">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2>Import</h2>
+      <button class="btn-close" data-close="import-modal" aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body">
+      <p class="hint-text" style="text-align:start;padding:0 0 10px">
+        Paste a <code>toloo://</code> link or open a <code>.toloo</code> file.
+        Rooms, messages, and relay endpoints are all detected automatically.
+      </p>
+      <textarea id="import-text-input"
+                placeholder="toloo://BASE64URL…"
+                rows="4"
+                autocorrect="off" autocomplete="off" spellcheck="false"></textarea>
+      <div class="btn-row" style="margin-top:10px">
+        <button id="btn-import-text">Decode</button>
+        <button id="btn-import-file-open" class="secondary">Open File…</button>
+      </div>
+    </div>
+    <!-- Results (populated after decode; hidden initially) -->
+    <div id="import-results" class="hidden">
+      <div id="import-results-list"></div>
+      <div class="import-actions">
+        <button id="btn-import-apply">Apply All</button>
+        <button id="btn-import-clear" class="secondary">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Room sheet -->
+  <div id="add-room-modal" class="sheet hidden">
+    <div class="sheet-handle"></div>
+
+    <div class="sheet-header">
+      <h2>New Room</h2>
+      <button class="btn-close" data-close="add-room-modal" aria-label="Close">✕</button>
+    </div>
+
+    <div class="tab-bar" role="tablist">
+      <button class="tab-btn active" role="tab"
+              data-tab="tab-create" aria-selected="true">Create</button>
+      <button class="tab-btn" role="tab"
+              data-tab="tab-join" aria-selected="false">Join by Key</button>
+    </div>
+
+    <div id="tab-create" class="tab-panel">
+      <div class="field">
+        <label for="new-room-name">Room name <span class="opt">(optional)</span></label>
+        <input id="new-room-name" type="text" placeholder="My room" />
+      </div>
+      <button id="btn-create-room">Create Room</button>
+    </div>
+
+    <div id="tab-join" class="tab-panel hidden">
+      <div class="field">
+        <label for="join-room-pub">Room public key</label>
+        <input id="join-room-pub" type="text" class="monospace"
+               placeholder="43-character base64url key" />
+      </div>
+      <div class="field">
+        <label for="join-room-name">Nickname <span class="opt">(optional)</span></label>
+        <input id="join-room-name" type="text" placeholder="Local label" />
+      </div>
+      <button id="btn-join-room">Join Room</button>
+    </div>
+
+  </div>
+
+  <!-- Share Room sheet -->
+  <div id="share-modal" class="sheet hidden">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2>Share Room Invite</h2>
+      <button class="btn-close" data-close="share-modal" aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body">
+      <p class="hint-text" style="text-align:start;padding:0 0 6px">
+        Share this link so others can join the room.
+        It works as a QR code, a text message, or a .toloo file — even without internet.
+      </p>
+      <div class="field">
+        <label>Invite link</label>
+        <textarea id="share-uri-display" readonly rows="4"
+                  style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);padding:8px 12px;font-family:monospace;font-size:0.72rem;resize:none;outline:none;word-break:break-all;"></textarea>
+      </div>
+      <div class="btn-row">
+        <button id="btn-copy-uri">Copy Link</button>
+        <button id="btn-save-toloo" class="secondary">Save .toloo File</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Relay Manager sheet -->
+  <div id="relay-modal" class="sheet hidden">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2>Local Relays</h2>
+      <button class="btn-close" data-close="relay-modal" aria-label="Close">✕</button>
+    </div>
+
+    <!-- Saved relay config cards (rendered by JS) -->
+    <div id="relay-config-list"></div>
+    <div id="relay-list-empty" class="hint-text">No relays configured. Add one below.</div>
+
+    <!-- Inline add-relay form (hidden until user clicks Add) -->
+    <div id="relay-form-panel" class="hidden">
+      <div class="relay-form-header">
+        <span>New Relay</span>
+        <button id="btn-relay-form-cancel" class="icon-btn" aria-label="Cancel">✕</button>
+      </div>
+      <div class="relay-form-body">
+
+        <div class="field">
+          <label for="relay-proto">Type</label>
+          <select id="relay-proto">
+            <option value="ws">ws — WebSocket</option>
+            <option value="wss">wss — WebSocket + TLS (auto cert)</option>
+            <option value="tcp">tcp — Raw TCP</option>
+            <option value="http">http — HTTP</option>
+            <option value="https">https — HTTP + TLS (auto cert)</option>
+            <optgroup label="Not yet implemented">
+              <option value="udp" disabled>udp — Raw UDP</option>
+              <option value="obfs4" disabled>obfs4 — Tor PT (anti-censorship)</option>
+              <option value="meek" disabled>meek — Domain-fronted HTTP</option>
+            </optgroup>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="relay-host">Host <span class="opt">(advertised IP or hostname)</span></label>
+          <div class="input-addon">
+            <input id="relay-host" type="text" placeholder="192.168.1.1" style="flex:1" />
+            <button id="btn-detect-ip" class="secondary small">Detect LAN</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="relay-port">Port</label>
+          <input id="relay-port" type="number" value="17701" min="1024" max="65535"
+                 title="Ports below 1024 require root/admin privileges" />
+        </div>
+
+        <!-- Shown for protos that support app-layer skins (ws, tcp, wss, http, https) -->
+        <div id="relay-field-skin" class="field">
+          <label for="relay-skin">Skin <span class="opt">(app-layer encryption)</span></label>
+          <select id="relay-skin">
+            <option value="">none</option>
+            <option value="x25519-v0.2">x25519-v0.2</option>
+          </select>
+        </div>
+
+        <!-- Shown when a skin is selected -->
+        <div id="relay-field-padding" class="field hidden">
+          <label for="relay-padding">Padding</label>
+          <select id="relay-padding">
+            <option value="none">none</option>
+            <option value="fixed-256">fixed-256</option>
+            <option value="fixed-mtu">fixed-mtu</option>
+            <option value="constant-rate">constant-rate</option>
+          </select>
+        </div>
+
+        <!-- Shown for ws / wss / http / https / meek protos -->
+        <div id="relay-field-path" class="field hidden">
+          <label for="relay-path">Path <span class="opt">(optional, default /)</span></label>
+          <input id="relay-path" type="text" placeholder="/" />
+        </div>
+
+        <!-- obfs4-specific -->
+        <div id="relay-field-cert" class="field hidden">
+          <label for="relay-cert">obfs4 Certificate</label>
+          <input id="relay-cert" type="text" class="monospace" placeholder="obfs4 node cert string" />
+        </div>
+        <div id="relay-field-iat" class="field hidden">
+          <label for="relay-iat">IAT Mode</label>
+          <select id="relay-iat">
+            <option value="0">0 — Disabled</option>
+            <option value="1">1 — Enabled</option>
+            <option value="2">2 — Paranoid</option>
+          </select>
+        </div>
+
+        <!-- meek-specific -->
+        <div id="relay-field-front" class="field hidden">
+          <label for="relay-front">Front domain <span class="opt">(SNI/CDN hostname)</span></label>
+          <input id="relay-front" type="text" placeholder="cdn.example.com" />
+        </div>
+
+        <div class="field">
+          <label class="checkbox-label">
+            <input id="relay-direct" type="checkbox" checked />
+            Direct (key-holder routing hint)
+          </label>
+        </div>
+
+        <div class="relay-form-actions">
+          <button id="btn-relay-save">Save Relay</button>
+        </div>
+      </div>
+    </div>
+
+    <button id="btn-relay-add" class="relay-add-btn">+ Add Relay</button>
+  </div>
+
+</div><!-- /#overlay -->
+
+<!-- Hidden file pickers -->
+<input type="file" id="file-input"        accept=".json"         style="display:none" />
+<input type="file" id="toloo-file-input"  accept=".toloo,text/*" style="display:none" />
+
+<!-- Toast notifications -->
+<div id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
+
+<script src="jdenticon.min.js"></script>
+<script src="app.js" type="module"></script>
+
+</body>
+</html>

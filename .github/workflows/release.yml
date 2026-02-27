@@ -1,0 +1,469 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+
+  # ────────────────────────────────────────────────────────────────────
+  # All native builds — Linux, Windows, Android — in one parallel matrix
+  # ────────────────────────────────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.artifact }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Linux x86_64 ──────────────────────────────────────────
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundles: deb,appimage,rpm
+            artifact: linux-x86_64
+            android: false
+
+          # ── Windows x86_64 ────────────────────────────────────────
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: msi,nsis
+            artifact: windows-x86_64
+            android: false
+
+          # ── Windows ARM64 (Surface / Snapdragon) ──────────────────
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            bundles: msi,nsis
+            artifact: windows-aarch64
+            android: false
+
+          # ── Android — Tauri native (API 24+, all ABIs) ────────────
+          - os: ubuntu-latest
+            target: android
+            bundles: apk
+            artifact: android-tauri
+            android: true
+            ndk: 27.0.12077973
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.android == false && matrix.target || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.artifact }}
+
+      # ── Linux system deps ──────────────────────────────────────────
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            rpm
+
+      # ── Android-only setup ────────────────────────────────────────
+      - name: Set up Java (Android)
+        if: matrix.android == true
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 17
+
+      - name: Setup Android SDK
+        if: matrix.android == true
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        if: matrix.android == true
+        run: sdkmanager "ndk;${{ matrix.ndk }}"
+
+      - name: Add Android Rust targets
+        if: matrix.android == true
+        run: |
+          rustup target add \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            x86_64-linux-android \
+            i686-linux-android
+
+      # ── Tauri CLI (all targets) ────────────────────────────────────
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      # ── Android init ──────────────────────────────────────────────
+      - name: Init Android project
+        if: matrix.android == true
+        run: cargo tauri android init
+        working-directory: toloo-app
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ matrix.ndk }}
+
+      - name: Setup Android signing (optional)
+        if: matrix.android == true && env.KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d \
+            > toloo-app/src-tauri/gen/android/app/keystore.jks
+
+      # ── Build ──────────────────────────────────────────────────────
+      - name: Build (desktop)
+        if: matrix.android == false
+        run: cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        working-directory: toloo-app
+
+      - name: Build (Android)
+        if: matrix.android == true
+        run: cargo tauri android build --apk
+        working-directory: toloo-app
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ matrix.ndk }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD:      ${{ secrets.KEY_PASSWORD }}
+
+      # ── Collect artifacts ─────────────────────────────────────────
+      - name: Collect artifacts (Linux)
+        if: matrix.os == 'ubuntu-latest' && matrix.android == false
+        run: |
+          mkdir -p dist
+          find toloo-app/src-tauri/target/${{ matrix.target }}/release/bundle \
+            \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) \
+            -exec cp {} dist/ \;
+
+      - name: Collect artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p dist
+          find toloo-app/src-tauri/target/${{ matrix.target }}/release/bundle \
+            \( -name "*.msi" -o -name "*.exe" \) \
+            -exec cp {} dist/ \;
+
+      - name: Collect artifacts (Android)
+        if: matrix.android == true
+        run: |
+          mkdir -p dist
+          find toloo-app/src-tauri/gen/android/app/build/outputs/apk \
+            -name "*.apk" -exec cp {} dist/ \;
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+
+  # ────────────────────────────────────────────────────────────────────
+  # CLI builds — Linux (static musl) + Windows (static CRT)
+  # Pure Rust + bundled SQLite: no system deps on any platform.
+  #
+  # macOS: uncomment the darwin entries below and they will just work
+  # on a macos-latest runner — no extra deps needed.
+  # ────────────────────────────────────────────────────────────────────
+  build-cli:
+    name: Build (${{ matrix.artifact }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 — fully static musl binary, runs on any Linux
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: cli-linux-x86_64
+            binary: toloo-cli
+            musl: true
+
+          # Windows x86_64 — static CRT, no MSVC redistributable needed
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: cli-windows-x86_64
+            binary: toloo-cli.exe
+            musl: false
+
+          # Windows ARM64 — Surface / Snapdragon, static CRT
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact: cli-windows-aarch64
+            binary: toloo-cli.exe
+            musl: false
+
+          # macOS x86_64 — no Xcode needed for a pure Rust CLI
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: cli-macos-x86_64
+            binary: toloo-cli
+            musl: false
+
+          # macOS ARM64 (Apple Silicon)
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: cli-macos-aarch64
+            binary: toloo-cli
+            musl: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.artifact }}
+
+      - name: Install musl tools
+        if: matrix.musl == true
+        run: sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build -p toloo-cli --release --target ${{ matrix.target }}
+        env:
+          # Statically link the CRT on Windows — .exe runs on any Win10+ with no redistributables
+          RUSTFLAGS: ${{ matrix.musl == false && matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} \
+             dist/toloo-cli-${{ matrix.artifact == 'cli-linux-x86_64' && 'linux-x86_64' || matrix.artifact }}
+          chmod +x dist/*
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p dist
+          SUFFIX=$(echo "${{ matrix.artifact }}" | sed 's/^cli-//')
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} \
+             dist/toloo-cli-${SUFFIX}.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+
+  # ────────────────────────────────────────────────────────────────────
+  # Android — legacy WebView APK (API 21+, Android 5.0+)
+  # Pure Gradle + WebView wrapper around the toloo-app web assets.
+  # No Rust — connects to external relays over WebSocket/HTTP.
+  # TODO: swap bundled assets for toloo-js once that is ready.
+  # ────────────────────────────────────────────────────────────────────
+  build-android-legacy:
+    name: Build (android-legacy-api21)
+    runs-on: ubuntu-latest
+    env:
+      APP_ID:   com.irandawn.toloo
+      APP_NAME: Toloo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 17
+
+      - name: Build project layout
+        run: |
+          PKG=$(echo "$APP_ID" | tr '.' '/')
+          mkdir -p legacy/app/src/main/{assets,java/${PKG},res/{values,mipmap-mdpi,mipmap-hdpi,mipmap-xhdpi,mipmap-xxhdpi,mipmap-xxxhdpi,mipmap-anydpi-v26}}
+          cp toloo-app/src/index.html       legacy/app/src/main/assets/
+          cp toloo-app/src/app.js           legacy/app/src/main/assets/
+          cp toloo-app/src/styles.css       legacy/app/src/main/assets/
+          cp toloo-app/src/jdenticon.min.js legacy/app/src/main/assets/ 2>/dev/null || true
+
+      - name: Setup app icons
+        run: |
+          ICON=toloo-app/src-tauri/icons/icon.png
+          if [ -f "$ICON" ]; then
+            sudo apt-get install -y imagemagick
+            W=$(identify -format "%w" "$ICON")
+            H=$((W/2))
+            convert -size ${W}x${W} xc:none -fill "#0d0908" \
+              -draw "circle ${H},${H} ${H},0" bg.png
+            convert bg.png "$ICON" -composite base.png
+            for spec in "48:mdpi" "72:hdpi" "96:xhdpi" "144:xxhdpi" "192:xxxhdpi"; do
+              sz=${spec%%:*}; dpi=${spec##*:}
+              convert base.png -resize ${sz}x${sz} \
+                legacy/app/src/main/res/mipmap-${dpi}/ic_launcher.png
+            done
+            for spec in "70x70:108x108:mdpi" "105x105:162x162:hdpi" "140x140:216x216:xhdpi" "210x210:324x324:xxhdpi" "280x280:432x432:xxxhdpi"; do
+              fg=${spec%%:*}; rest=${spec#*:}; canvas=${rest%%:*}; dpi=${rest##*:}
+              convert "$ICON" -resize $fg -background none -gravity center -extent $canvas \
+                legacy/app/src/main/res/mipmap-${dpi}/ic_launcher_foreground.png
+            done
+            cat > legacy/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          EOF
+            echo '<?xml version="1.0" encoding="utf-8"?><resources><color name="ic_launcher_background">#0d0908</color></resources>' \
+              > legacy/app/src/main/res/values/colors.xml
+          fi
+
+      - name: Write Android sources
+        run: |
+          PKG=$(echo "$APP_ID" | tr '.' '/')
+          cat > legacy/app/src/main/java/${PKG}/MainActivity.java << EOF
+          package ${APP_ID};
+          import android.app.Activity; import android.os.Bundle;
+          import android.webkit.*;
+          public class MainActivity extends Activity {
+              private WebView wv;
+              @Override protected void onCreate(Bundle s) {
+                  super.onCreate(s); wv = new WebView(this); setContentView(wv);
+                  WebSettings ws = wv.getSettings();
+                  ws.setJavaScriptEnabled(true); ws.setDomStorageEnabled(true); ws.setAllowFileAccess(true);
+                  wv.setWebViewClient(new WebViewClient());
+                  wv.loadUrl("file:///android_asset/index.html");
+              }
+              @Override public void onBackPressed() { if (wv.canGoBack()) wv.goBack(); else super.onBackPressed(); }
+          }
+          EOF
+          echo '<?xml version="1.0" encoding="utf-8"?><resources><string name="app_name">'"$APP_NAME"'</string></resources>' \
+            > legacy/app/src/main/res/values/strings.xml
+          cat > legacy/app/src/main/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <application android:allowBackup="true" android:label="@string/app_name"
+                  android:icon="@mipmap/ic_launcher"
+                  android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+                  <activity android:name=".MainActivity" android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboardHidden">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+      - name: Write Gradle files
+        run: |
+          TAG=${GITHUB_REF_NAME#v}
+          cat > legacy/app/build.gradle << EOF
+          plugins { id 'com.android.application' }
+          android {
+              namespace '${APP_ID}'; compileSdk 34
+              defaultConfig {
+                  applicationId '${APP_ID}'; minSdk 21; targetSdk 34
+                  versionCode ${GITHUB_RUN_NUMBER:-1}; versionName '${TAG:-dev}'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
+              }
+              buildTypes { release { minifyEnabled false }; debug { minifyEnabled false } }
+          }
+          EOF
+          cat > legacy/build.gradle << 'EOF'
+          plugins { id 'com.android.application' version '8.2.0' apply false }
+          EOF
+          cat > legacy/settings.gradle << EOF
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = '${APP_NAME}'; include ':app'
+          EOF
+          printf 'org.gradle.jvmargs=-Xmx2048m\nandroid.useAndroidX=true\n' > legacy/gradle.properties
+
+      - name: Setup signing (optional)
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > legacy/app/keystore.jks
+          cat >> legacy/app/build.gradle << 'EOF'
+          android {
+              signingConfigs { release {
+                  storeFile file('keystore.jks')
+                  storePassword System.getenv('KEYSTORE_PASSWORD')
+                  keyAlias     System.getenv('KEY_ALIAS')
+                  keyPassword  System.getenv('KEY_PASSWORD')
+              }}
+              buildTypes { release { signingConfig signingConfigs.release } }
+          }
+          EOF
+
+      - name: Install Gradle
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.2-bin.zip
+          unzip -q gradle-8.2-bin.zip
+          echo "$PWD/gradle-8.2/bin" >> $GITHUB_PATH
+
+      - name: Generate wrapper & build
+        run: |
+          cd legacy && gradle wrapper --gradle-version 8.2
+          ./gradlew assembleRelease --no-daemon
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS:         ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD:      ${{ secrets.KEY_PASSWORD }}
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          cp legacy/app/build/outputs/apk/release/app-release.apk \
+             dist/toloo-legacy-release.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-legacy
+          path: dist/
+
+  # ────────────────────────────────────────────────────────────────────
+  # Create GitHub Release — runs after all jobs complete
+  # ────────────────────────────────────────────────────────────────────
+  release:
+    name: Create Release
+    needs: [build, build-cli, build-android-legacy]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: List artifacts
+        run: find artifacts/ -type f | sort
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: "Toloo ${{ github.ref_name }}"
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body: |
+            ## Toloo ${{ github.ref_name }}
+
+            | Platform | File | Notes |
+            |---|---|---|
+            | Linux | `.AppImage` | Portable — runs on any distro (Arch, Fedora, NixOS, …) |
+            | Linux | `.deb` | Debian / Ubuntu |
+            | Linux | `.rpm` | Fedora / openSUSE / RHEL |
+            | Linux CLI | `toloo-cli-linux-x86_64` | Static musl binary, zero system deps |
+            | Windows x86_64 | `.msi` / `.exe` | Standard 64-bit |
+            | Windows ARM64 | `.msi` / `.exe` | Surface / Snapdragon laptops |
+            | Android | `*-aarch64-release.apk` | API 24+, ARM64 — full native backend |
+            | Android | `*-armv7-release.apk` | API 24+, 32-bit ARM — full native backend |
+            | Android (legacy) | `toloo-legacy-release.apk` | API 21+ (Android 5.0+), WebView client |
+
+            **Android sideload**: Settings → Security → Install unknown apps → enable for your file manager, then open the APK.
+            **Signing**: APKs are unsigned unless `KEYSTORE_BASE64` repo secret is configured.
+          files: artifacts/**/*
