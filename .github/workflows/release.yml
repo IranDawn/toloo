@@ -129,6 +129,56 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ matrix.ndk }}
 
+      - name: Setup Android app icons
+        if: matrix.android == 'tauri'
+        run: |
+          ICON=toloo-app/src/favicon.png
+          RES=toloo-app/src-tauri/gen/android/app/src/main/res
+          sudo apt-get install -y imagemagick
+          W=$(identify -format "%w" "$ICON")
+          H=$((W/2))
+
+          # Legacy round icon: dark circle background + favicon composited
+          convert -size ${W}x${W} xc:none -fill "#0a0a0a" \
+            -draw "circle ${H},${H} ${H},0" bg.png
+          convert bg.png "$ICON" -composite legacy.png
+
+          # Legacy icons for Android < 8.0 (mipmap-* ic_launcher)
+          convert legacy.png -resize 48x48   ${RES}/mipmap-mdpi/ic_launcher.png
+          convert legacy.png -resize 72x72   ${RES}/mipmap-hdpi/ic_launcher.png
+          convert legacy.png -resize 96x96   ${RES}/mipmap-xhdpi/ic_launcher.png
+          convert legacy.png -resize 144x144 ${RES}/mipmap-xxhdpi/ic_launcher.png
+          convert legacy.png -resize 192x192 ${RES}/mipmap-xxxhdpi/ic_launcher.png
+
+          # Adaptive foreground icons (safe zone = 65% of canvas)
+          mkdir -p ${RES}/mipmap-anydpi-v26
+          convert "$ICON" -resize 70x70   -background none -gravity center -extent 108x108 ${RES}/mipmap-mdpi/ic_launcher_foreground.png
+          convert "$ICON" -resize 105x105 -background none -gravity center -extent 162x162 ${RES}/mipmap-hdpi/ic_launcher_foreground.png
+          convert "$ICON" -resize 140x140 -background none -gravity center -extent 216x216 ${RES}/mipmap-xhdpi/ic_launcher_foreground.png
+          convert "$ICON" -resize 210x210 -background none -gravity center -extent 324x324 ${RES}/mipmap-xxhdpi/ic_launcher_foreground.png
+          convert "$ICON" -resize 280x280 -background none -gravity center -extent 432x432 ${RES}/mipmap-xxxhdpi/ic_launcher_foreground.png
+
+          # Adaptive icon XML (Android 8.0+)
+          cat > ${RES}/mipmap-anydpi-v26/ic_launcher.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          EOF
+          cat > ${RES}/mipmap-anydpi-v26/ic_launcher_round.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_launcher_background"/>
+              <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+          </adaptive-icon>
+          EOF
+
+          # Background color resource
+          mkdir -p ${RES}/values
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#0a0a0a</color>\n</resources>\n' \
+            > ${RES}/values/ic_launcher_colors.xml
+
       - name: Setup Tauri Android signing
         if: matrix.android == 'tauri' && needs.check-android-signing.outputs.android == 'true'
         env:
@@ -324,21 +374,15 @@ jobs:
         if: matrix.musl == true
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Install aarch64 musl cross-toolchain
+      - name: Install cargo-zigbuild (ARM64 musl cross)
         if: matrix.musl_cross == true
-        run: |
-          wget -q https://musl.cc/aarch64-linux-musl-cross.tgz
-          tar xzf aarch64-linux-musl-cross.tgz
-          echo "$PWD/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+        run: pip3 install ziglang cargo-zigbuild
 
       - name: Build
-        run: cargo build -p toloo-cli --release --target ${{ matrix.target }}
+        run: ${{ matrix.musl_cross == true && 'cargo zigbuild' || 'cargo build' }} -p toloo-cli --release --target ${{ matrix.target }}
         env:
           # Statically link the CRT on Windows — .exe runs on any Win10+ with no redistributables
           RUSTFLAGS: ${{ matrix.musl == false && matrix.os == 'windows-latest' && '-C target-feature=+crt-static' || '' }}
-          # musl cross-compiler for ARM64 Linux (C deps like sqlite3, ring)
-          CC_aarch64_unknown_linux_musl: ${{ matrix.musl_cross == true && 'aarch64-linux-musl-gcc' || '' }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: ${{ matrix.musl_cross == true && 'aarch64-linux-musl-gcc' || '' }}
 
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
