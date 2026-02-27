@@ -94,7 +94,7 @@ toloo-core  ←  toloo-lib  ←  toloo-cli
 
 | Platform | Minimum version | Notes |
 |---|---|---|
-| Linux (any distro) | Kernel 4.x, glibc 2.17+ | `.AppImage` bundles its own WebKit — works on Arch, Fedora, NixOS, Ubuntu 16.04+, etc. `.deb` / `.rpm` depend on system WebKit. |
+| Linux (any distro) | glibc 2.17+, webkit2gtk-4.1 | `.deb` / `.rpm` declare WebKit as a dependency. `toloo-linux-x86_64.tar.gz` is the plain binary — install `webkit2gtk-4.1` from your package manager first. |
 | Windows | Windows 10 (1803+) | Requires WebView2 runtime (pre-installed on Win11; auto-downloaded on Win10). x86_64 and ARM64 builds available. |
 | Android | API 24 / Android 7.0+ | Tauri native build, full Rust backend. Per-ABI APKs: `aarch64` (ARM64, all modern phones) and `armv7` (32-bit ARM, older phones). |
 | macOS | 10.15 Catalina+ | Build requires macOS runner — not in current CI. |
@@ -245,7 +245,7 @@ targets in parallel and creates a GitHub Release:
 
 | Job | Runner | Output |
 |---|---|---|
-| `build (linux-x86_64)` | ubuntu-latest | `.deb`, `.AppImage`, `.rpm` |
+| `build (linux-x86_64)` | ubuntu-latest | `.deb`, `.rpm`, `toloo-linux-x86_64.tar.gz` (plain binary) |
 | `build (windows-x86_64)` | windows-latest | `.msi`, `.exe` (app installer) |
 | `build (windows-aarch64)` | windows-latest | `.msi` (ARM64 app installer) |
 | `build (android-tauri)` | ubuntu-latest | signed per-ABI `.apk` files (API 24+) |

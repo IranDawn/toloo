@@ -14,14 +14,6 @@ fn main() {
             env::set_var("GDK_BACKEND", "wayland");
         }
 
-        // WebKitGTK's DMABuf renderer fails on systems where EGL can't create a
-        // display (NVIDIA proprietary drivers, VMs, certain Mesa configs), printing
-        // "Could not create default EGL display: EGL_BAD_PARAMETER. Aborting..."
-        // Disabling it makes WebKit fall back to software compositing, which works
-        // everywhere. Only set when the user hasn't already provided an override.
-        if env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-            env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        }
     }
 
     toloo_app_lib::run()
