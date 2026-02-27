@@ -193,9 +193,13 @@ jobs:
         run: |
           python3 - << 'PYEOF'
           import pathlib
-          main = pathlib.Path("toloo-app/src-tauri/gen/android/app/src/main/kotlin/com/irandawn/toloo/MainActivity.kt")
+          matches = list(pathlib.Path("toloo-app/src-tauri/gen/android").rglob("MainActivity.kt"))
+          if not matches:
+              raise FileNotFoundError("MainActivity.kt not found under gen/android")
+          main = matches[0]
+          pkg = ".".join(main.parent.parts[-3:])  # e.g. com.irandawn.toloo
           main.write_text("\n".join([
-              "package com.irandawn.toloo",
+              f"package {pkg}",
               "",
               "import android.os.Bundle",
               "import androidx.core.view.ViewCompat",
