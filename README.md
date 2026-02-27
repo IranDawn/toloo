@@ -94,9 +94,11 @@ toloo-core  ←  toloo-lib  ←  toloo-cli
 
 | Platform | Minimum version | Notes |
 |---|---|---|
-| Linux (any distro) | Kernel 4.x, glibc 2.17+ | `.AppImage` bundles its own WebKit — works on Arch, Fedora, NixOS, Ubuntu 16.04+, etc. `.deb` / `.rpm` depend on system WebKit. |
-| Windows | Windows 10 (1803+) | Requires WebView2 runtime (pre-installed on Win11; auto-downloaded on Win10). x86_64 and ARM64 builds available. |
-| Android | API 24 / Android 7.0+ | Tauri native build, full Rust backend. Per-ABI APKs: `aarch64` (ARM64, all modern phones) and `armv7` (32-bit ARM, older phones). |
+| Linux x86_64 | glibc 2.17+, `webkit2gtk-4.1` | `toloo-linux-x86_64` standalone binary. `.deb` / `.rpm` install WebKit automatically. |
+| Linux aarch64 | glibc 2.17+, `webkit2gtk-4.1` | `toloo-linux-aarch64` standalone binary (Raspberry Pi 4/5, Ampere, AWS Graviton). |
+| Windows x86_64 | Windows 10 (1803+) | Requires WebView2 runtime (pre-installed on Win11; auto-downloaded on Win10). |
+| Windows aarch64 | Windows 10 on ARM | Surface / Snapdragon laptops. WebView2 pre-installed. |
+| Android | API 24 / Android 7.0+ | Tauri native build, full Rust backend. Universal APK (works on all devices). |
 | macOS | 10.15 Catalina+ | Build requires macOS runner — not in current CI. |
 | iOS | 16+ | Build requires macOS + Xcode — not in current CI. |
 
@@ -108,11 +110,11 @@ natively on Linux, Windows, and macOS with no system libraries required.
 | Platform | Minimum | Binary | Notes |
 |---|---|---|---|
 | Linux x86_64 | Kernel 2.6.39 (Ubuntu 12.04+) | static musl | Zero system deps — copy and run on any distro |
-| Linux ARM64 | Kernel 3.x+ | static musl | Raspberry Pi, Ampere, AWS Graviton — cross-compiled with zig |
+| Linux aarch64 | Kernel 3.x+ | static musl | Raspberry Pi, Ampere, AWS Graviton — cross-compiled with zig |
 | Windows x86_64 | Windows 10 | `.exe` (static CRT) | No MSVC redistributable required |
-| Windows ARM64 | Windows 10 on ARM | `.exe` (static CRT) | Surface / Snapdragon |
+| Windows aarch64 | Windows 10 on ARM | `.exe` (static CRT) | Surface / Snapdragon |
 | macOS x86_64 | 10.15 Catalina | binary | No Xcode needed — pure Rust, built on `macos-latest` |
-| macOS ARM64 | 11.0 Big Sur | binary | Apple Silicon, no Xcode needed |
+| macOS aarch64 | 11.0 Big Sur | binary | Apple Silicon, no Xcode needed |
 
 ---
 
@@ -142,7 +144,7 @@ rustup target add x86_64-unknown-linux-musl
 sudo apt-get install -y musl-tools
 cargo build -p toloo-cli --release --target x86_64-unknown-linux-musl
 
-# Linux ARM64: static musl, cross-compiled with zig (Raspberry Pi, Graviton, etc.)
+# Linux aarch64: static musl, cross-compiled with zig (Raspberry Pi, Graviton, etc.)
 rustup target add aarch64-unknown-linux-musl
 pip3 install ziglang cargo-zigbuild
 cargo zigbuild -p toloo-cli --release --target aarch64-unknown-linux-musl
@@ -150,7 +152,7 @@ cargo zigbuild -p toloo-cli --release --target aarch64-unknown-linux-musl
 # Windows: static CRT — .exe runs on any Win10+ with no redistributables
 # (run this from a Windows machine or windows-latest CI runner)
 cargo build -p toloo-cli --release --target x86_64-pc-windows-msvc
-# ARM64:
+# aarch64:
 rustup target add aarch64-pc-windows-msvc
 cargo build -p toloo-cli --release --target aarch64-pc-windows-msvc
 # Set RUSTFLAGS for static CRT linkage:
@@ -165,7 +167,7 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
   libayatana-appindicator3-dev librsvg2-dev patchelf rpm
 
 cargo tauri dev   -p toloo-app          # hot-reload dev mode
-cargo tauri build -p toloo-app          # produces .deb + .AppImage + .rpm
+cargo tauri build -p toloo-app          # produces .deb + .rpm + standalone binary
 ```
 
 On Arch: `sudo pacman -S webkit2gtk-4.1 gtk3 libappindicator-gtk3 librsvg`
@@ -177,7 +179,7 @@ On Arch: `sudo pacman -S webkit2gtk-4.1 gtk3 libappindicator-gtk3 librsvg`
 cargo tauri dev   -p toloo-app
 cargo tauri build -p toloo-app          # produces .msi + .exe (NSIS)
 
-# ARM64 cross-compile (from any Windows machine)
+# aarch64 cross-compile (from any Windows machine)
 rustup target add aarch64-pc-windows-msvc
 cargo tauri build -p toloo-app --target aarch64-pc-windows-msvc
 ```
@@ -245,14 +247,15 @@ targets in parallel and creates a GitHub Release:
 
 | Job | Runner | Output |
 |---|---|---|
-| `build (linux-x86_64)` | ubuntu-latest | `.deb`, `.AppImage`, `.rpm` |
+| `build (linux-x86_64)` | ubuntu-latest | `.deb`, `.rpm`, `toloo-linux-x86_64` |
+| `build (linux-aarch64)` | ubuntu-24.04-arm | `.deb`, `.rpm`, `toloo-linux-aarch64` |
 | `build (windows-x86_64)` | windows-latest | `.msi`, `.exe` (app installer) |
-| `build (windows-aarch64)` | windows-latest | `.msi` (ARM64 app installer) |
-| `build (android-tauri)` | ubuntu-latest | signed per-ABI `.apk` files (API 24+) |
+| `build (windows-aarch64)` | windows-latest | `.msi` (aarch64 app installer) |
+| `build (android-tauri)` | ubuntu-latest | signed universal `.apk` (API 24+) |
 | `build-cli (cli-linux-x86_64)` | ubuntu-latest | static musl binary |
-| `build-cli (cli-linux-aarch64)` | ubuntu-latest | static musl binary (ARM64, zig cross) |
+| `build-cli (cli-linux-aarch64)` | ubuntu-latest | static musl binary (aarch64, zig cross) |
 | `build-cli (cli-windows-x86_64)` | windows-latest | `.exe` (static CRT) |
-| `build-cli (cli-windows-aarch64)` | windows-latest | `.exe` ARM64 (static CRT) |
+| `build-cli (cli-windows-aarch64)` | windows-latest | `.exe` aarch64 (static CRT) |
 | `build-cli (cli-macos-x86_64)` | macos-latest | macOS binary (x86_64) |
 | `build-cli (cli-macos-aarch64)` | macos-latest | macOS binary (Apple Silicon) |
 
@@ -376,5 +379,5 @@ bindings consumable by Kotlin and Swift. This is not yet implemented — the
 `toloo-ffi` crate is a placeholder.
 
 **Current mobile story**: Android APKs are built in CI via `cargo tauri android build`,
-producing signed per-ABI APKs (ARM64 and ARMv7) with the full Rust backend. iOS builds
+producing a signed universal APK with the full Rust backend. iOS builds
 are possible with `cargo tauri ios build` on a macOS runner but are not in current CI.

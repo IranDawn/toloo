@@ -41,8 +41,17 @@ jobs:
           # ── Linux x86_64 ──────────────────────────────────────────
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            bundles: deb,appimage,rpm
+            bundles: deb,rpm
             artifact: linux-x86_64
+            binary: toloo-linux-x86_64
+            android: false
+
+          # ── Linux aarch64 ─────────────────────────────────────────
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            bundles: deb,rpm
+            artifact: linux-aarch64
+            binary: toloo-linux-aarch64
             android: false
 
           # ── Windows x86_64 ────────────────────────────────────────
@@ -52,7 +61,7 @@ jobs:
             artifact: windows-x86_64
             android: false
 
-          # ── Windows ARM64 (Surface / Snapdragon) ──────────────────
+          # ── Windows aarch64 (Surface / Snapdragon) ────────────────
           - os: windows-latest
             target: aarch64-pc-windows-msvc
             bundles: msi
@@ -275,12 +284,15 @@ jobs:
 
       # ── Collect artifacts ─────────────────────────────────────────
       - name: Collect artifacts (Linux)
-        if: matrix.os == 'ubuntu-latest' && matrix.android == false
+        if: matrix.os != 'windows-latest' && matrix.android == false
         run: |
           mkdir -p dist
           find target/${{ matrix.target }}/release/bundle \
-            \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) \
+            \( -name "*.deb" -o -name "*.rpm" \) \
             -exec cp {} dist/ \;
+          # Standalone binary — users install webkit2gtk-4.1 from their package
+          # manager, then run this directly (same as target/release/toloo-app).
+          cp target/${{ matrix.target }}/release/toloo-app dist/${{ matrix.binary }}
 
       - name: Collect artifacts (Windows)
         if: matrix.os == 'windows-latest'
@@ -323,7 +335,7 @@ jobs:
             binary: toloo
             musl: true
 
-          # Linux ARM64 — fully static musl binary, cross-compiled
+          # Linux aarch64 — fully static musl binary, cross-compiled
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
             artifact: cli-linux-aarch64
@@ -338,7 +350,7 @@ jobs:
             binary: toloo.exe
             musl: false
 
-          # Windows ARM64 — Surface / Snapdragon, static CRT
+          # Windows aarch64 — Surface / Snapdragon, static CRT
           - os: windows-latest
             target: aarch64-pc-windows-msvc
             artifact: cli-windows-aarch64
@@ -352,7 +364,7 @@ jobs:
             binary: toloo
             musl: false
 
-          # macOS ARM64 (Apple Silicon)
+          # macOS aarch64 (Apple Silicon)
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: cli-macos-aarch64
@@ -374,7 +386,7 @@ jobs:
         if: matrix.musl == true
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Install cargo-zigbuild (ARM64 musl cross)
+      - name: Install cargo-zigbuild (aarch64 musl cross)
         if: matrix.musl_cross == true
         run: pip3 install ziglang cargo-zigbuild
 
@@ -432,15 +444,15 @@ jobs:
 
             | Platform | File | Notes |
             |---|---|---|
-            | Linux | `.AppImage` | Portable — runs on any distro (Arch, Fedora, NixOS, …) |
-            | Linux | `.deb` | Debian / Ubuntu |
-            | Linux | `.rpm` | Fedora / openSUSE / RHEL |
+            | Linux x86_64 | `toloo-linux-x86_64` | Standalone binary — needs `webkit2gtk-4.1` |
+            | Linux aarch64 | `toloo-linux-aarch64` | Standalone binary — needs `webkit2gtk-4.1` |
+            | Linux | `.deb` | Debian / Ubuntu — installs WebKit automatically |
+            | Linux | `.rpm` | Fedora / openSUSE / RHEL — installs WebKit automatically |
             | Linux CLI (x86_64) | `toloo-cli-linux-x86_64` | Static musl binary, zero system deps |
-            | Linux CLI (ARM64) | `toloo-cli-linux-aarch64` | Static musl binary, cross-compiled |
+            | Linux CLI (aarch64) | `toloo-cli-linux-aarch64` | Static musl binary, cross-compiled |
             | Windows x86_64 | `.msi` / `.exe` | Standard 64-bit |
-            | Windows ARM64 | `.msi` | Surface / Snapdragon laptops |
-            | Android | `*-aarch64-release.apk` | API 24+, ARM64 — full native backend |
-            | Android | `*-armv7-release.apk` | API 24+, 32-bit ARM — full native backend |
+            | Windows aarch64 | `.msi` | Surface / Snapdragon laptops |
+            | Android | `*-release.apk` | API 24+, universal APK — full native backend |
 
             **Android sideload**: Settings → Security → Install unknown apps → enable for your file manager, then open the APK.
             **Signing**: Android APKs are only included when `KEYSTORE_BASE64` repo secret is configured.
