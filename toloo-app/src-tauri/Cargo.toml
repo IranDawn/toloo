@@ -7,7 +7,7 @@ edition = "2021"
 name = "toloo_app_lib"
 # rlib  = desktop (default)
 # cdylib + staticlib added by `tauri android/ios build` at mobile build time
-crate-type = ["rlib"]
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
 name = "toloo-app"

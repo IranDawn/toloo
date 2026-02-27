@@ -138,7 +138,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.android == false
         run: |
           mkdir -p dist
-          find toloo-app/src-tauri/target/${{ matrix.target }}/release/bundle \
+          find target/${{ matrix.target }}/release/bundle \
             \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) \
             -exec cp {} dist/ \;
 
@@ -147,7 +147,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          find toloo-app/src-tauri/target/${{ matrix.target }}/release/bundle \
+          find target/${{ matrix.target }}/release/bundle \
             \( -name "*.msi" -o -name "*.exe" \) \
             -exec cp {} dist/ \;
 
@@ -422,8 +422,8 @@ jobs:
       - name: Collect APK
         run: |
           mkdir -p dist
-          cp legacy/app/build/outputs/apk/release/app-release.apk \
-             dist/toloo-legacy-release.apk
+          APK=$(find legacy/app/build/outputs/apk/release -name "*.apk" | head -1)
+          cp "$APK" dist/toloo-legacy-release.apk
 
       - uses: actions/upload-artifact@v4
         with:
