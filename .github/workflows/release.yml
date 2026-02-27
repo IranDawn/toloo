@@ -41,7 +41,7 @@ jobs:
           # ── Linux x86_64 ──────────────────────────────────────────
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            bundles: deb,rpm
+            bundles: deb,appimage,rpm
             artifact: linux-x86_64
             android: false
 
@@ -278,16 +278,9 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.android == false
         run: |
           mkdir -p dist
-
-          # Packages (.deb / .rpm) — depend on system WebKit
           find target/${{ matrix.target }}/release/bundle \
-            \( -name "*.deb" -o -name "*.rpm" \) \
+            \( -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \) \
             -exec cp {} dist/ \;
-
-          # Plain binary tarball — same as the debug binary, uses system WebKit.
-          # Requires webkit2gtk-4.1 (Arch: webkit2gtk-4.1, Ubuntu 22.04+: libwebkit2gtk-4.1)
-          BINARY=target/${{ matrix.target }}/release/toloo-app
-          tar -czf dist/toloo-linux-x86_64.tar.gz -C "$(dirname $BINARY)" "$(basename $BINARY)"
 
       - name: Collect artifacts (Windows)
         if: matrix.os == 'windows-latest'
@@ -439,9 +432,9 @@ jobs:
 
             | Platform | File | Notes |
             |---|---|---|
-            | Linux | `toloo-linux-x86_64.tar.gz` | Plain binary — needs `webkit2gtk-4.1` from your package manager |
-            | Linux | `.deb` | Debian / Ubuntu — installs WebKit dependency automatically |
-            | Linux | `.rpm` | Fedora / openSUSE / RHEL — installs WebKit dependency automatically |
+            | Linux | `.AppImage` | Portable — runs on any distro (Arch, Fedora, NixOS, …) |
+            | Linux | `.deb` | Debian / Ubuntu |
+            | Linux | `.rpm` | Fedora / openSUSE / RHEL |
             | Linux CLI (x86_64) | `toloo-cli-linux-x86_64` | Static musl binary, zero system deps |
             | Linux CLI (ARM64) | `toloo-cli-linux-aarch64` | Static musl binary, cross-compiled |
             | Windows x86_64 | `.msi` / `.exe` | Standard 64-bit |
