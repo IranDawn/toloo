@@ -22,6 +22,7 @@ const state = {
   savedRelays:    [],          // RelayConfigRecord[] from backend DB
   runningRelays:  [],          // RelayInfo[] from backend (live metrics)
   relayPollTimer: null,
+  blocklist:      [],          // BlocklistItem[] from backend DB
 };
 
 // RelayConfigRecord (from DB):
@@ -56,6 +57,10 @@ function persistRooms() {
 
 function persistRelayUrls() {
   LS.set("toloo_relay_urls", JSON.stringify(state.relayUrls));
+}
+
+function saveState() {
+  persistRooms();
 }
 
 function loadPersistedState() {
@@ -195,6 +200,8 @@ function applyNode(info) {
 
   $("no-identity-section").classList.add("hidden");
   $("has-identity-section").classList.remove("hidden");
+  const ppSection = $("passphrase-section");
+  if (ppSection) ppSection.classList.remove("hidden");
   $("my-pubkey").textContent = info.sig_pub;
 
   const wrap = $("id-avatar-wrap");
@@ -208,6 +215,8 @@ function clearNode() {
   $("no-id-icon").classList.remove("hidden");
   $("no-identity-section").classList.remove("hidden");
   $("has-identity-section").classList.add("hidden");
+  const ppSection = $("passphrase-section");
+  if (ppSection) ppSection.classList.add("hidden");
   LS.rm("toloo_node");
 }
 
@@ -238,6 +247,38 @@ $("file-input").addEventListener("change", async () => {
 function handleSaveIdentity() {
   if (!state.node) return;
   downloadText(state.node.node_json, "toloo-identity.json", "application/json");
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// Encrypted identity
+// ══════════════════════════════════════════════════════════════════════
+
+async function handleEncryptSave() {
+  if (!state.node) { toast("Load an identity first.", "error"); return; }
+  const passphrase = $("passphrase-input").value;
+  if (!passphrase) { toast("Enter a passphrase.", "error"); return; }
+  try {
+    const blob = await invoke("encrypt_identity", { passphrase });
+    downloadText(blob, "toloo-identity.toloo-key");
+    LS.set("toloo_encrypted_node", blob);
+    $("passphrase-input").value = "";
+    toast("Encrypted identity saved.", "success");
+  } catch (e) { toast("Encryption failed: " + e, "error"); }
+}
+
+async function handleLoadEncrypted() {
+  const passphrase = $("passphrase-unlock-input").value;
+  if (!passphrase) { toast("Enter a passphrase.", "error"); return; }
+  const blob = LS.get("toloo_encrypted_node");
+  if (!blob) { toast("No encrypted identity found. Import a .toloo-key file first.", "error"); return; }
+  try {
+    const info = await invoke("load_encrypted_identity", { encryptedBlob: blob, passphrase });
+    applyNode(info);
+    LS.set("toloo_node", info.node_json);
+    $("passphrase-unlock-input").value = "";
+    toast("Identity unlocked.", "success");
+  } catch (e) { toast("Wrong passphrase or corrupted data.", "error"); }
 }
 
 
@@ -343,6 +384,81 @@ function renderRelayUrlSuggestions() {
     btn.addEventListener("click", () => addRelayUrl(url));
     el.appendChild(btn);
   });
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// Blocklist
+// ══════════════════════════════════════════════════════════════════════
+
+async function loadBlocklist() {
+  if (!IS_TAURI) return;
+  try {
+    state.blocklist = await invoke("get_blocklist_cmd");
+  } catch { state.blocklist = []; }
+}
+
+function isBlocked(nodePub) {
+  return state.blocklist.some(b => b.node_pub === nodePub);
+}
+
+function renderBlocklist() {
+  const list  = $("blocklist-list");
+  const empty = $("blocklist-empty");
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (!state.blocklist.length) {
+    if (empty) empty.classList.remove("hidden");
+    return;
+  }
+  if (empty) empty.classList.add("hidden");
+
+  state.blocklist.forEach(entry => {
+    const item = document.createElement("div");
+    item.className = "blocklist-item";
+
+    const avWrap = document.createElement("div");
+    avWrap.className = "blocklist-avatar";
+    avWrap.appendChild(makeAvatar(entry.node_pub, 28));
+
+    const info = document.createElement("div");
+    info.className = "blocklist-info";
+    info.innerHTML =
+      `<div class="blocklist-node">${escapeHtml(entry.node_pub)}</div>` +
+      (entry.reason ? `<div class="blocklist-reason">${escapeHtml(entry.reason)}</div>` : "");
+
+    const btn = document.createElement("button");
+    btn.className = "blocklist-unblock secondary small";
+    btn.textContent = "Unblock";
+    btn.addEventListener("click", () => handleUnblockNode(entry.node_pub));
+
+    item.append(avWrap, info, btn);
+    list.appendChild(item);
+  });
+}
+
+async function handleBlockNode(nodePub) {
+  if (!IS_TAURI) return;
+  const reason = prompt("Reason for blocking (optional):");
+  try {
+    await invoke("block_node_cmd", { nodePub, reason: reason || null });
+    await loadBlocklist();
+    renderBlocklist();
+    renderMessages();
+    toast("User blocked.", "success");
+  } catch (e) { toast("Block failed: " + e, "error"); }
+}
+
+async function handleUnblockNode(nodePub) {
+  if (!IS_TAURI) return;
+  try {
+    await invoke("unblock_node_cmd", { nodePub });
+    await loadBlocklist();
+    renderBlocklist();
+    renderMessages();
+    toast("User unblocked.", "success");
+  } catch (e) { toast("Unblock failed: " + e, "error"); }
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -469,6 +585,7 @@ function renderMessages() {
   list.innerHTML = "";
 
   room.messages.forEach(msg => {
+    if (isBlocked(msg.author)) return;
     const isOwn = state.node && msg.author === state.node.sig_pub;
 
     const group = document.createElement("div");
@@ -1134,6 +1251,51 @@ async function handleExportMessages() {
 
 
 // ══════════════════════════════════════════════════════════════════════
+// Flag messages
+// ══════════════════════════════════════════════════════════════════════
+
+async function handleFlagMessage(msg, room) {
+  if (!IS_TAURI || !state.node) { toast("Load an identity first.", "error"); return; }
+  const category = prompt("Flag category (spam, abuse, off-topic):", "spam");
+  if (!category) return;
+  const reason = prompt("Reason (optional):");
+  try {
+    const envJson = await invoke("create_flag", {
+      roomPub: room.pub, targetEid: msg.eid, category, reason: reason || null,
+    });
+    // Broadcast flag to all relays.
+    state.relayUrls.forEach(url =>
+      invoke("pool_exchange", { relayUrl: url, offer: [envJson], wantRooms: [], after: 0 })
+        .catch(() => {})
+    );
+    toast("Message flagged.", "success");
+  } catch (e) { toast("Flag failed: " + e, "error"); }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// Attestations
+// ══════════════════════════════════════════════════════════════════════
+
+async function handleAttest(nodePub, level) {
+  if (!IS_TAURI || !state.node) { toast("Load an identity first.", "error"); return; }
+  if (nodePub === state.node.sig_pub) { toast("Cannot attest yourself.", "error"); return; }
+  const reason = prompt(`Reason for ${level} attestation (optional):`);
+  try {
+    const envJson = await invoke("create_attestation", {
+      targetNode: nodePub, level, reason: reason || null,
+    });
+    // Broadcast to all relays.
+    state.relayUrls.forEach(url =>
+      invoke("pool_exchange", { relayUrl: url, offer: [envJson], wantRooms: [], after: 0 })
+        .catch(() => {})
+    );
+    toast(`${level.charAt(0).toUpperCase() + level.slice(1)} attestation sent.`, "success");
+  } catch (e) { toast("Attestation failed: " + e, "error"); }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
 // Local relay management
 // ══════════════════════════════════════════════════════════════════════
 
@@ -1150,14 +1312,20 @@ function getRunningInfo(configId) {
 function renderNetFooter() {
   const el = $("net-summary");
   const running = state.runningRelays;
+  const hasRelayUrls = state.relayUrls.length > 0;
+  const dotClass = running.length ? "online" : (hasRelayUrls ? "online" : "offline");
+
   if (!running.length) {
-    el.innerHTML = `${state.savedRelays.length ? state.savedRelays.length + " relay(s) offline" : "No relays configured"}`;
+    el.innerHTML =
+      `<span class="net-status-dot ${dotClass}"></span>` +
+      `${state.savedRelays.length ? state.savedRelays.length + " relay(s) offline" : "No relays configured"}`;
     return;
   }
   const totalActive = running.reduce((s, r) => s + r.active, 0);
   const totalIn     = running.reduce((s, r) => s + r.bytes_in,  0);
   const totalOut    = running.reduce((s, r) => s + r.bytes_out, 0);
   el.innerHTML =
+    `<span class="net-status-dot online"></span>` +
     `<span class="net-active">${running.length} relay${running.length > 1 ? "s" : ""}</span>` +
     ` · ${totalActive} peer${totalActive !== 1 ? "s" : ""}` +
     ` <span class="net-bytes">↑${fmtBytes(totalOut)} ↓${fmtBytes(totalIn)}</span>`;
@@ -1521,6 +1689,27 @@ function msgCtxItems(msg, room) {
       action() { navigator.clipboard.writeText(msg.body).catch(() => {}); }
     },
   ];
+  if (!isOwn) {
+    items.push("sep");
+    items.push({
+      label: "Flag message", icon: "⚑",
+      action() { handleFlagMessage(msg, room); }
+    });
+    items.push({
+      label: "Attest (positive)", icon: "👍",
+      action() { handleAttest(msg.author, "positive"); }
+    });
+    items.push({
+      label: "Attest (negative)", icon: "👎",
+      action() { handleAttest(msg.author, "negative"); }
+    });
+    if (!isBlocked(msg.author)) {
+      items.push({
+        label: "Block user", icon: "🚫", danger: true,
+        action() { handleBlockNode(msg.author); }
+      });
+    }
+  }
   if (isOwn) {
     items.push("sep");
     items.push({
@@ -1575,6 +1764,7 @@ function bindEvents() {
   $("btn-identity").addEventListener("click", () => {
     renderRelayUrls();
     renderRelayUrlSuggestions();
+    renderBlocklist();
     openModal("identity-modal");
   });
   $("btn-new-chat").addEventListener("click", () => {
@@ -1596,6 +1786,17 @@ function bindEvents() {
   $("btn-keygen").addEventListener("click", handleKeygen);
   $("btn-load-identity").addEventListener("click", handleLoadIdentity);
   $("btn-save-identity").addEventListener("click", handleSaveIdentity);
+  // Encrypted identity
+  $("btn-encrypt-save").addEventListener("click", handleEncryptSave);
+  $("btn-load-encrypted").addEventListener("click", handleLoadEncrypted);
+  $("encrypted-file-input").addEventListener("change", async () => {
+    const file = $("encrypted-file-input").files[0];
+    if (!file) return;
+    const blob = await file.text();
+    LS.set("toloo_encrypted_node", blob.trim());
+    toast("Encrypted identity imported. Enter passphrase to unlock.", "info");
+    $("encrypted-file-input").value = "";
+  });
   $("btn-clear-identity").addEventListener("click", () => {
     clearNode();
     toast("Identity removed.");
@@ -1723,7 +1924,14 @@ async function init() {
     }
   }
 
+  // If no plaintext node, check for encrypted one.
+  if (!state.node && LS.get("toloo_encrypted_node")) {
+    // User will need to enter passphrase — show a hint.
+    toast("Encrypted identity found. Open Identity & Settings to unlock.", "info", 5000);
+  }
+
   await loadRelayConfigs();
+  await loadBlocklist();
 }
 
 init();

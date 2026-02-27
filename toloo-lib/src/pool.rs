@@ -34,6 +34,20 @@ pub struct MembershipState {
     pub banned: HashSet<String>,
 }
 
+/// Result of a TOFU pin check (§4.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TofuResult {
+    /// First time seeing this node — pin recorded.
+    NewPin,
+    /// Seen before and fingerprint matches.
+    Match,
+    /// Seen before but fingerprint changed — potential impersonation.
+    Mismatch {
+        expected: String,
+        first_seen_at: u64,
+    },
+}
+
 impl Pool {
     pub fn open(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
@@ -357,6 +371,338 @@ impl Pool {
         collect_rows(rows)
     }
 
+    // ── TOFU Pin Storage (§4.4, §11.3.1) ──────────────────────────────
+
+    /// Check (and optionally record) a TOFU pin for a node.
+    /// `fingerprint` is the hex-encoded SHA-256 of the node's public key.
+    pub fn check_tofu_pin(&self, node_pub: &str, fingerprint: &str, now: u64) -> Result<TofuResult> {
+        let existing: Option<(String, i64)> = self
+            .conn
+            .query_row(
+                "SELECT fingerprint, first_seen_at FROM tofu_pins WHERE node_pub = ?1",
+                params![node_pub],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        match existing {
+            Some((stored_fp, first_seen)) => {
+                if stored_fp == fingerprint {
+                    Ok(TofuResult::Match)
+                } else {
+                    Ok(TofuResult::Mismatch {
+                        expected: stored_fp,
+                        first_seen_at: first_seen as u64,
+                    })
+                }
+            }
+            None => {
+                self.conn.execute(
+                    "INSERT INTO tofu_pins (node_pub, first_seen_at, fingerprint) VALUES (?1, ?2, ?3)",
+                    params![node_pub, now as i64, fingerprint],
+                )?;
+                Ok(TofuResult::NewPin)
+            }
+        }
+    }
+
+    /// Get the stored TOFU pin for a node, if any.
+    pub fn get_tofu_pin(&self, node_pub: &str) -> Result<Option<(String, u64)>> {
+        let result: Option<(String, i64)> = self
+            .conn
+            .query_row(
+                "SELECT fingerprint, first_seen_at FROM tofu_pins WHERE node_pub = ?1",
+                params![node_pub],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        Ok(result.map(|(fp, ts)| (fp, ts as u64)))
+    }
+
+    // ── Blob Piece Storage (§11.7) ─────────────────────────────────────
+
+    /// Store a single blob piece.
+    pub fn put_blob_piece(&self, blob_id: &str, piece_index: u32, data: &[u8]) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO blob_pieces (blob_id, piece_index, data) VALUES (?1, ?2, ?3)",
+            params![blob_id, piece_index as i64, data],
+        )?;
+        Ok(())
+    }
+
+    /// Fetch a single blob piece.
+    pub fn get_blob_piece(&self, blob_id: &str, piece_index: u32) -> Result<Option<Vec<u8>>> {
+        self.conn
+            .query_row(
+                "SELECT data FROM blob_pieces WHERE blob_id = ?1 AND piece_index = ?2",
+                params![blob_id, piece_index as i64],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// Fetch all pieces for a blob, ordered by index. Returns None if any piece is missing.
+    pub fn get_blob(&self, blob_id: &str, expected_pieces: u32) -> Result<Option<Vec<Vec<u8>>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT piece_index, data FROM blob_pieces WHERE blob_id = ?1 ORDER BY piece_index ASC",
+        )?;
+        let rows: Vec<(i64, Vec<u8>)> = stmt
+            .query_map(params![blob_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        if rows.len() != expected_pieces as usize {
+            return Ok(None);
+        }
+        for (i, (idx, _)) in rows.iter().enumerate() {
+            if *idx != i as i64 {
+                return Ok(None);
+            }
+        }
+        Ok(Some(rows.into_iter().map(|(_, data)| data).collect()))
+    }
+
+    /// Count stored pieces for a blob.
+    pub fn blob_piece_count(&self, blob_id: &str) -> Result<u32> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM blob_pieces WHERE blob_id = ?1",
+            params![blob_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as u32)
+    }
+
+    // ── Local Moderation / Blocklist (§13.3) ───────────────────────────
+
+    /// Block a node. `kind` is "block" or "spam".
+    pub fn block_node(&self, node_pub: &str, kind: &str, reason: Option<&str>, now: u64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO blocklist (node_pub, kind, reason, blocked_at) VALUES (?1, ?2, ?3, ?4)",
+            params![node_pub, kind, reason, now as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Unblock a node.
+    pub fn unblock_node(&self, node_pub: &str) -> Result<bool> {
+        let changed = self.conn.execute(
+            "DELETE FROM blocklist WHERE node_pub = ?1",
+            params![node_pub],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Check if a node is blocked.
+    pub fn is_blocked(&self, node_pub: &str) -> Result<bool> {
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM blocklist WHERE node_pub = ?1)",
+                params![node_pub],
+                |row| row.get(0),
+            )?;
+        Ok(exists)
+    }
+
+    /// Get all blocked nodes.
+    pub fn get_blocklist(&self) -> Result<Vec<(String, String, Option<String>, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT node_pub, kind, reason, blocked_at FROM blocklist ORDER BY blocked_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let ts: i64 = row.get(3)?;
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, ts as u64))
+        })?;
+        collect_rows(rows)
+    }
+
+    // ── Attestation Storage (§8.3–§8.5) ────────────────────────────────
+
+    /// Store an attestation envelope.
+    pub fn put_attestation(&self, env: &Envelope) -> Result<String> {
+        let id = datum_id(env);
+        let inner = innermost(env);
+        let attester = inner.d.n.clone();
+        let c = inner.d.c.as_ref().ok_or_else(|| anyhow!("attestation missing content"))?;
+        let target = c.get("target").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("attestation missing c.target"))?;
+        let level = c.get("level").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("attestation missing c.level"))?;
+        let ts = inner.d.ts as i64;
+        let json = toloo_core::canonical::canonical(env)?;
+
+        self.conn.execute(
+            "INSERT OR IGNORE INTO attestations (id, json, attester, target, level, ts) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, json, attester, target, level, ts],
+        )?;
+        Ok(id)
+    }
+
+    /// Get all attestations about a target node.
+    pub fn get_attestations_for(&self, target: &str) -> Result<Vec<Envelope>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT json FROM attestations WHERE target = ?1 ORDER BY ts ASC",
+        )?;
+        let rows = stmt.query_map(params![target], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let json = row?;
+            out.push(serde_json::from_str(&json).context("invalid stored attestation JSON")?);
+        }
+        Ok(out)
+    }
+
+    /// Get attestation counts for a target: (positive, negative, neutral).
+    pub fn attestation_counts(&self, target: &str) -> Result<(u64, u64, u64)> {
+        let mut pos = 0u64;
+        let mut neg = 0u64;
+        let mut neu = 0u64;
+        let mut stmt = self.conn.prepare(
+            "SELECT level, COUNT(*) FROM attestations WHERE target = ?1 GROUP BY level",
+        )?;
+        let rows = stmt.query_map(params![target], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (level, count) = row?;
+            match level.as_str() {
+                "positive" => pos = count as u64,
+                "negative" => neg = count as u64,
+                "neutral" => neu = count as u64,
+                _ => {}
+            }
+        }
+        Ok((pos, neg, neu))
+    }
+
+    // ── Room Flag Aggregation (§13.8) ──────────────────────────────────
+
+    /// Store a room.flag event.
+    pub fn put_flag(&self, env: &Envelope) -> Result<String> {
+        let id = datum_id(env);
+        let inner = innermost(env);
+        let room = inner.d.r.as_deref()
+            .ok_or_else(|| anyhow!("room.flag missing room"))?;
+        let c = inner.d.c.as_ref().ok_or_else(|| anyhow!("room.flag missing content"))?;
+        let target_eid = c.get("target").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("room.flag missing c.target"))?;
+        let category = c.get("category").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("room.flag missing c.category"))?;
+        let flagger = inner.d.n.clone();
+        let ts = inner.d.ts as i64;
+
+        self.conn.execute(
+            "INSERT OR IGNORE INTO room_flags (id, room, target_eid, category, flagger, ts) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, room, target_eid, category, flagger, ts],
+        )?;
+        Ok(id)
+    }
+
+    /// Get flag count for a specific event in a room.
+    pub fn flag_count(&self, room: &str, target_eid: &str) -> Result<u64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM room_flags WHERE room = ?1 AND target_eid = ?2",
+            params![room, target_eid],
+            |row| row.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    /// Get flag counts by category for a specific event.
+    pub fn flag_counts_by_category(&self, room: &str, target_eid: &str) -> Result<Vec<(String, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT category, COUNT(*) FROM room_flags \
+             WHERE room = ?1 AND target_eid = ?2 GROUP BY category ORDER BY category ASC",
+        )?;
+        let rows = stmt.query_map(params![room, target_eid], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
+        })?;
+        collect_rows(rows)
+    }
+
+    // ── Storage Pruning (§11.5) ────────────────────────────────────────
+
+    /// Prune events older than `retention_days` for a room. Returns count of deleted rows.
+    pub fn prune_retention(&self, room: &str, retention_days: u64) -> Result<u64> {
+        let cutoff_ms = retention_days * 86_400_000;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| anyhow!("system clock error"))?
+            .as_millis() as u64;
+        let threshold = now.saturating_sub(cutoff_ms) as i64;
+
+        let deleted = self.conn.execute(
+            "DELETE FROM envelopes WHERE room = ?1 AND ts < ?2",
+            params![room, threshold],
+        )?;
+        Ok(deleted as u64)
+    }
+
+    /// Prune uncommitted events older than `ttl_ms`. Returns count of deleted rows.
+    pub fn prune_uncommitted(&self, room: &str, ttl_ms: u64) -> Result<u64> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| anyhow!("system clock error"))?
+            .as_millis() as u64;
+        let threshold = now.saturating_sub(ttl_ms) as i64;
+
+        let deleted = self.conn.execute(
+            "DELETE FROM envelopes WHERE room = ?1 AND tc IS NULL AND ts < ?2",
+            params![room, threshold],
+        )?;
+        Ok(deleted as u64)
+    }
+
+    /// Run pruning for a room using its rule set. Returns (retention_pruned, uncommitted_pruned).
+    pub fn prune_room(&self, room: &str, rules: &RuleSet) -> Result<(u64, u64)> {
+        let mut ret_pruned = 0u64;
+        let mut unc_pruned = 0u64;
+
+        if let Some(days) = rules.retention_days() {
+            if days > 0 {
+                ret_pruned = self.prune_retention(room, days)?;
+            }
+        }
+        if let Some(ttl_ms) = rules.uncommitted_ttl_ms() {
+            if ttl_ms > 0 {
+                unc_pruned = self.prune_uncommitted(room, ttl_ms)?;
+            }
+        }
+
+        Ok((ret_pruned, unc_pruned))
+    }
+
+    // ── Export / Import (§11.10) ────────────────────────────────────────
+
+    /// Export all envelopes for a room as a JSON array string.
+    pub fn export_room(&self, room: &str) -> Result<Vec<Envelope>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT json FROM envelopes WHERE room = ?1 ORDER BY ts ASC, id ASC",
+        )?;
+        let rows = stmt.query_map(params![room], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let json = row?;
+            out.push(serde_json::from_str(&json).context("invalid stored envelope JSON")?);
+        }
+        Ok(out)
+    }
+
+    /// Import envelopes into the pool. Validates signatures before storing.
+    /// Returns count of successfully imported envelopes.
+    pub fn import_envelopes(&self, envelopes: &[Envelope]) -> Result<u64> {
+        let mut count = 0u64;
+        for env in envelopes {
+            if toloo_core::envelope::verify_chain(env).is_ok() {
+                self.put(env)?;
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
 }
 
 fn init_schema(conn: &Connection) -> Result<()> {
@@ -378,6 +724,53 @@ fn init_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_n       ON envelopes(n);
         CREATE INDEX IF NOT EXISTS idx_to_node ON envelopes(to_node);
         CREATE INDEX IF NOT EXISTS idx_room_ch ON envelopes(room, channel, tc);
+
+        -- TOFU pin storage (§4.4, §11.3.1)
+        CREATE TABLE IF NOT EXISTS tofu_pins (
+            node_pub      TEXT PRIMARY KEY,
+            first_seen_at INTEGER NOT NULL,
+            fingerprint   TEXT NOT NULL
+        );
+
+        -- Blob piece storage (§11.7)
+        CREATE TABLE IF NOT EXISTS blob_pieces (
+            blob_id     TEXT NOT NULL,
+            piece_index INTEGER NOT NULL,
+            data        BLOB NOT NULL,
+            PRIMARY KEY (blob_id, piece_index)
+        );
+
+        -- Local moderation blocklist (§13.3)
+        CREATE TABLE IF NOT EXISTS blocklist (
+            node_pub   TEXT PRIMARY KEY,
+            kind       TEXT NOT NULL DEFAULT 'block',
+            reason     TEXT,
+            blocked_at INTEGER NOT NULL
+        );
+
+        -- Attestation storage (§8.3–§8.5)
+        CREATE TABLE IF NOT EXISTS attestations (
+            id         TEXT PRIMARY KEY,
+            json       TEXT NOT NULL,
+            attester   TEXT NOT NULL,
+            target     TEXT NOT NULL,
+            level      TEXT NOT NULL,
+            ts         INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_att_target   ON attestations(target);
+        CREATE INDEX IF NOT EXISTS idx_att_attester  ON attestations(attester);
+
+        -- Room flag aggregation (§13.8)
+        CREATE TABLE IF NOT EXISTS room_flags (
+            id          TEXT PRIMARY KEY,
+            room        TEXT NOT NULL,
+            target_eid  TEXT NOT NULL,
+            category    TEXT NOT NULL,
+            flagger     TEXT NOT NULL,
+            ts          INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_flags_room   ON room_flags(room);
+        CREATE INDEX IF NOT EXISTS idx_flags_target ON room_flags(room, target_eid);
     "#,
     )?;
     Ok(())
@@ -733,5 +1126,145 @@ mod tests {
         let rs = ruleset_from_pool(&pool, &room.sig.pub_key).expect("from_room_meta");
         assert!(rs.can_join());
         assert!(rs.can_post(), "latest update should enable posting");
+    }
+
+    // ---- TOFU pin storage ----
+
+    #[test]
+    fn tofu_new_pin_then_match() {
+        let pool = Pool::memory().expect("pool");
+        let result = pool.check_tofu_pin("NODE_A", "fp_aaa", 1000).unwrap();
+        assert_eq!(result, super::TofuResult::NewPin);
+
+        let result = pool.check_tofu_pin("NODE_A", "fp_aaa", 2000).unwrap();
+        assert_eq!(result, super::TofuResult::Match);
+    }
+
+    #[test]
+    fn tofu_mismatch_on_fingerprint_change() {
+        let pool = Pool::memory().expect("pool");
+        pool.check_tofu_pin("NODE_B", "fp_original", 100).unwrap();
+        let result = pool.check_tofu_pin("NODE_B", "fp_changed", 200).unwrap();
+        match result {
+            super::TofuResult::Mismatch { expected, first_seen_at } => {
+                assert_eq!(expected, "fp_original");
+                assert_eq!(first_seen_at, 100);
+            }
+            other => panic!("expected Mismatch, got {other:?}"),
+        }
+    }
+
+    // ---- Blob piece storage ----
+
+    #[test]
+    fn blob_piece_store_and_fetch() {
+        let pool = Pool::memory().expect("pool");
+        pool.put_blob_piece("blob1", 0, b"piece0").unwrap();
+        pool.put_blob_piece("blob1", 1, b"piece1").unwrap();
+
+        assert_eq!(pool.blob_piece_count("blob1").unwrap(), 2);
+        assert_eq!(pool.get_blob_piece("blob1", 0).unwrap().unwrap(), b"piece0");
+        assert_eq!(pool.get_blob_piece("blob1", 1).unwrap().unwrap(), b"piece1");
+        assert!(pool.get_blob_piece("blob1", 2).unwrap().is_none());
+    }
+
+    #[test]
+    fn get_blob_returns_all_pieces_in_order() {
+        let pool = Pool::memory().expect("pool");
+        pool.put_blob_piece("blob2", 0, b"aaa").unwrap();
+        pool.put_blob_piece("blob2", 1, b"bbb").unwrap();
+        pool.put_blob_piece("blob2", 2, b"ccc").unwrap();
+
+        let pieces = pool.get_blob("blob2", 3).unwrap().unwrap();
+        assert_eq!(pieces.len(), 3);
+        assert_eq!(pieces[0], b"aaa");
+        assert_eq!(pieces[2], b"ccc");
+
+        // Wrong expected count returns None
+        assert!(pool.get_blob("blob2", 2).unwrap().is_none());
+    }
+
+    // ---- Local moderation ----
+
+    #[test]
+    fn block_and_unblock_node() {
+        let pool = Pool::memory().expect("pool");
+        assert!(!pool.is_blocked("NODE_X").unwrap());
+
+        pool.block_node("NODE_X", "block", Some("spam"), 1000).unwrap();
+        assert!(pool.is_blocked("NODE_X").unwrap());
+
+        let list = pool.get_blocklist().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, "NODE_X");
+        assert_eq!(list[0].1, "block");
+
+        pool.unblock_node("NODE_X").unwrap();
+        assert!(!pool.is_blocked("NODE_X").unwrap());
+    }
+
+    // ---- Attestation storage ----
+
+    #[test]
+    fn attestation_store_and_query() {
+        let pool = Pool::memory().expect("pool");
+        let attester = mk_node();
+        let target = mk_node();
+
+        let att = toloo_core::events::make_side_attestation(
+            &attester, &target.sig.pub_key, "positive", Some("good peer"),
+        ).unwrap();
+        pool.put_attestation(&att).unwrap();
+
+        let atts = pool.get_attestations_for(&target.sig.pub_key).unwrap();
+        assert_eq!(atts.len(), 1);
+
+        let (pos, neg, neu) = pool.attestation_counts(&target.sig.pub_key).unwrap();
+        assert_eq!(pos, 1);
+        assert_eq!(neg, 0);
+        assert_eq!(neu, 0);
+    }
+
+    // ---- Room flag aggregation ----
+
+    #[test]
+    fn flag_store_and_count() {
+        let pool = Pool::memory().expect("pool");
+        let node = mk_node();
+        let room = mk_room();
+
+        let flag = toloo_core::events::make_room_flag(
+            &node, &room.sig.pub_key, "eid_123", "spam", Some("offensive"),
+        ).unwrap();
+        pool.put_flag(&flag).unwrap();
+
+        assert_eq!(pool.flag_count(&room.sig.pub_key, "eid_123").unwrap(), 1);
+
+        let by_cat = pool.flag_counts_by_category(&room.sig.pub_key, "eid_123").unwrap();
+        assert_eq!(by_cat.len(), 1);
+        assert_eq!(by_cat[0], ("spam".to_owned(), 1));
+    }
+
+    // ---- Export / Import ----
+
+    #[test]
+    fn export_import_roundtrip() {
+        let pool = Pool::memory().expect("pool");
+        let node = mk_node();
+        let room = mk_room();
+
+        let (_d1, commit) = make_room_create(&node, &room, Some("Export Room"), Some(json!([])))
+            .expect("room.create");
+        pool.put(&commit).expect("put");
+
+        let exported = pool.export_room(&room.sig.pub_key).unwrap();
+        assert_eq!(exported.len(), 1);
+
+        let pool2 = Pool::memory().expect("pool2");
+        let imported = pool2.import_envelopes(&exported).unwrap();
+        assert_eq!(imported, 1);
+
+        let re_exported = pool2.export_room(&room.sig.pub_key).unwrap();
+        assert_eq!(re_exported.len(), 1);
     }
 }

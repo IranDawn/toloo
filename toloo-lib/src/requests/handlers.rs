@@ -57,7 +57,7 @@ pub async fn handle_request(
         "node.peers"    => handle_node_peers(d.c.as_ref(), pool),
         "node.rooms"    => handle_node_rooms(d.c.as_ref(), pool),
         "system.fetch"  => handle_system_fetch(d.c.as_ref(), pool),
-        "blob.fetch"    => Ok(vec![error("not_found", "blob storage not available")]),
+        "blob.fetch"    => handle_blob_fetch(d.c.as_ref(), pool),
         "room.summary"  => handle_room_summary(d.c.as_ref(), pool, config),
         _ => Ok(vec![error("invalid_request", &format!("unknown endpoint: {}", d.t))]),
     };
@@ -160,6 +160,26 @@ fn handle_pool_exchange(c: Option<&Value>, pool: &Pool, config: &RelayConfig) ->
                     // Full envelope submission — validate and store.
                     if let Ok(env) = parse_envelope(item.clone()) {
                         if verify_chain(&env).is_ok() {
+                            let inner = innermost(&env);
+
+                            // §13.3 — reject events from locally blocked nodes.
+                            if pool.is_blocked(&inner.d.n).unwrap_or(false) {
+                                continue;
+                            }
+
+                            // Route side-events to their dedicated stores.
+                            match inner.d.t.as_str() {
+                                "side.attestation" => {
+                                    let _ = pool.put_attestation(&env);
+                                    continue;
+                                }
+                                "room.flag" => {
+                                    let _ = pool.put_flag(&env);
+                                    // Also store in main pool for replication.
+                                }
+                                _ => {}
+                            }
+
                             // Track the original datum_id (what this peer already has).
                             // If the relay auto-commits it (depth-1 → depth-2), the committed
                             // envelope has a DIFFERENT datum_id and must NOT be excluded from
@@ -192,8 +212,10 @@ fn handle_pool_exchange(c: Option<&Value>, pool: &Pool, config: &RelayConfig) ->
         let entries = pool.get_wanted(&room_refs, &type_refs, after, limit)?;
 
         for entry in entries {
-            // Exclude events the peer already has.
-            if !offered_ids.contains(&entry.id) {
+            // Exclude events the peer already has and events from blocked nodes.
+            if !offered_ids.contains(&entry.id)
+                && !pool.is_blocked(&innermost(&entry.env).d.n).unwrap_or(false)
+            {
                 responses.push(to_envelope_json(&entry.env));
             }
         }
@@ -204,7 +226,6 @@ fn handle_pool_exchange(c: Option<&Value>, pool: &Pool, config: &RelayConfig) ->
     for entry in peer_metas {
         let id = datum_id(&entry.env);
         if !offered_ids.contains(&id) {
-            // Only include if not already in the response.
             let env_val = to_envelope_json(&entry.env);
             if !responses.contains(&env_val) {
                 responses.push(env_val);
@@ -273,6 +294,43 @@ fn handle_system_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
     let id_refs: Vec<&str> = ids.iter().map(String::as_str).collect();
     let entries = pool.get_by_datum_ids(&id_refs)?;
     Ok(entries.into_iter().map(|e| to_envelope_json(&e.env)).collect())
+}
+
+// ---- §10.8.5 blob.fetch ----
+
+fn handle_blob_fetch(c: Option<&Value>, pool: &Pool) -> Result<Vec<Value>> {
+    let c = require_object(c, "blob.fetch")?;
+    let blob_id = require_string(c, "blob_id", "blob.fetch")?;
+    let piece_index = c.get("piece_index").and_then(Value::as_u64);
+
+    match piece_index {
+        Some(idx) => {
+            // Fetch a single piece.
+            match pool.get_blob_piece(blob_id, idx as u32)? {
+                Some(data) => {
+                    let encoded = toloo_core::base64url::encode(&data);
+                    Ok(vec![json!({
+                        "blob_id": blob_id,
+                        "piece_index": idx,
+                        "data": encoded
+                    })])
+                }
+                None => Ok(vec![error("not_found", "blob piece not found")]),
+            }
+        }
+        None => {
+            // Return piece count (metadata query).
+            let count = pool.blob_piece_count(blob_id)?;
+            if count == 0 {
+                Ok(vec![error("not_found", "blob not found")])
+            } else {
+                Ok(vec![json!({
+                    "blob_id": blob_id,
+                    "pieces": count
+                })])
+            }
+        }
+    }
 }
 
 // ---- §10.8.6 room.summary ----

@@ -43,6 +43,12 @@ impl AppDb {
                 direct  INTEGER NOT NULL DEFAULT 1,
                 active  INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS blocklist (
+                node_pub   TEXT PRIMARY KEY,
+                kind       TEXT NOT NULL DEFAULT 'block',
+                reason     TEXT,
+                blocked_at INTEGER NOT NULL
+            );
         ").map_err(|e| e.to_string())?;
         Ok(Self { conn })
     }
@@ -95,6 +101,43 @@ impl AppDb {
             rusqlite::params![active as i64, id],
         ).map(|_| ()).map_err(|e| e.to_string())
     }
+
+    pub fn block_node(&self, node_pub: &str, kind: &str, reason: Option<&str>, now: u64) -> Result<(), String> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO blocklist (node_pub, kind, reason, blocked_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![node_pub, kind, reason, now as i64],
+        ).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    pub fn unblock_node(&self, node_pub: &str) -> Result<bool, String> {
+        let changed = self.conn.execute(
+            "DELETE FROM blocklist WHERE node_pub = ?1", [node_pub],
+        ).map_err(|e| e.to_string())?;
+        Ok(changed > 0)
+    }
+
+    pub fn get_blocklist(&self) -> Result<Vec<(String, String, Option<String>, u64)>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT node_pub, kind, reason, blocked_at FROM blocklist ORDER BY blocked_at DESC"
+        ).map_err(|e| e.to_string())?;
+        let rows: Vec<(String, String, Option<String>, u64)> = stmt.query_map([], |row| {
+            let ts: i64 = row.get(3)?;
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, ts as u64))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    pub fn is_blocked(&self, node_pub: &str) -> Result<bool, String> {
+        let exists: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM blocklist WHERE node_pub = ?1)",
+            [node_pub],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        Ok(exists)
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -136,7 +179,8 @@ mod commands {
     use toloo_core::base64url;
     use toloo_core::crypto::{ed25519_generate, x25519_generate};
     use toloo_core::envelope::{depth, innermost, make_envelope, parse_envelope, verify_chain, wrap_ack};
-    use toloo_core::events::{make_node_meta, make_room_create, make_room_join, make_room_message};
+    use toloo_core::events::{make_node_meta, make_room_create, make_room_join, make_room_message, make_side_attestation, make_room_flag};
+    use toloo_core::keystore;
     use toloo_core::ids::eid;
     use toloo_core::types::{EndpointDescriptor, Envelope, Keypair, LocalNode, LocalRoom};
     use toloo_lib::discovery::{
@@ -193,6 +237,14 @@ mod commands {
         pub creator:        String,
         pub invite_uri:     String,
         pub envelope_jsons: Vec<String>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct BlocklistItem {
+        pub node_pub:   String,
+        pub kind:       String,
+        pub reason:     Option<String>,
+        pub blocked_at: u64,
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────
@@ -950,6 +1002,97 @@ mod commands {
 
         Ok(InviteInfo { room_pub, room_name, creator, invite_uri, envelope_jsons })
     }
+
+    // ─── Encrypted identity ───────────────────────────────────────────
+
+    #[tauri::command]
+    pub fn encrypt_identity(passphrase: String, state: tauri::State<AppState>) -> Result<String, String> {
+        let guard = state.node.lock().unwrap();
+        let node = guard.as_ref().ok_or("No identity loaded")?;
+        let node_json = serde_json::to_string(node).map_err(to_err)?;
+        let encrypted = keystore::encrypt_key(node_json.as_bytes(), &passphrase).map_err(to_err)?;
+        Ok(encrypted.blob)
+    }
+
+    #[tauri::command]
+    pub fn load_encrypted_identity(
+        encrypted_blob: String,
+        passphrase:     String,
+        state:          tauri::State<AppState>,
+    ) -> Result<NodeInfo, String> {
+        let encrypted = keystore::EncryptedKey { blob: encrypted_blob };
+        let decrypted = keystore::decrypt_key(&encrypted, &passphrase).map_err(to_err)?;
+        let node_json = std::str::from_utf8(&decrypted).map_err(to_err)?;
+        let node: LocalNode = serde_json::from_str(node_json).map_err(to_err)?;
+        let info = node_info(&node)?;
+        *state.node.lock().unwrap() = Some(node);
+        Ok(info)
+    }
+
+    // ─── Attestations ─────────────────────────────────────────────────
+
+    #[tauri::command]
+    pub fn create_attestation(
+        target_node: String,
+        level:       String,
+        reason:      Option<String>,
+        state:       tauri::State<AppState>,
+    ) -> Result<String, String> {
+        let guard = state.node.lock().unwrap();
+        let node = guard.as_ref().ok_or("No identity loaded")?;
+        let env = make_side_attestation(node, &target_node, &level, reason.as_deref()).map_err(to_err)?;
+        serialize_env(&env)
+    }
+
+    // ─── Flags ────────────────────────────────────────────────────────
+
+    #[tauri::command]
+    pub fn create_flag(
+        room_pub:   String,
+        target_eid: String,
+        category:   String,
+        reason:     Option<String>,
+        state:      tauri::State<AppState>,
+    ) -> Result<String, String> {
+        let guard = state.node.lock().unwrap();
+        let node = guard.as_ref().ok_or("No identity loaded")?;
+        let env = make_room_flag(node, &room_pub, &target_eid, &category, reason.as_deref()).map_err(to_err)?;
+        serialize_env(&env)
+    }
+
+    // ─── Local moderation (blocklist) ─────────────────────────────────
+
+    #[tauri::command]
+    pub fn block_node_cmd(
+        node_pub: String,
+        reason:   Option<String>,
+        state:    tauri::State<AppState>,
+    ) -> Result<(), String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(to_err)?
+            .as_millis() as u64;
+        with_db(&state, |db| db.block_node(&node_pub, "block", reason.as_deref(), now))
+    }
+
+    #[tauri::command]
+    pub fn unblock_node_cmd(node_pub: String, state: tauri::State<AppState>) -> Result<(), String> {
+        with_db(&state, |db| db.unblock_node(&node_pub).map(|_| ()))
+    }
+
+    #[tauri::command]
+    pub fn get_blocklist_cmd(state: tauri::State<AppState>) -> Result<Vec<BlocklistItem>, String> {
+        with_db(&state, |db| {
+            db.get_blocklist().map(|rows| rows.into_iter().map(|(node_pub, kind, reason, blocked_at)| {
+                BlocklistItem { node_pub, kind, reason, blocked_at }
+            }).collect())
+        })
+    }
+
+    #[tauri::command]
+    pub fn is_blocked_cmd(node_pub: String, state: tauri::State<AppState>) -> Result<bool, String> {
+        with_db(&state, |db| db.is_blocked(&node_pub))
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1001,6 +1144,14 @@ pub fn run() {
             commands::relay_stop,
             commands::relay_list,
             commands::detect_lan_ip_cmd,
+            commands::encrypt_identity,
+            commands::load_encrypted_identity,
+            commands::create_attestation,
+            commands::create_flag,
+            commands::block_node_cmd,
+            commands::unblock_node_cmd,
+            commands::get_blocklist_cmd,
+            commands::is_blocked_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running toloo app");

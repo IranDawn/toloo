@@ -12,3 +12,4 @@ pub mod private;
 pub mod events;
 pub mod rules;
 pub mod vectors;
+pub mod keystore;

@@ -1,7 +1,5 @@
 use serde_json::Value;
 
-use crate::envelope::innermost;
-
 /// A single room rule parsed from the `rules` array in channel -1 metadata.
 ///
 /// Unknown rule types are represented as `Unknown` and skipped during evaluation
@@ -181,6 +179,28 @@ impl RuleSet {
                 None
             }
         })
+    }
+
+    /// Returns the retention period in days, if a `retention` rule is present.
+    pub fn retention_days(&self) -> Option<u64> {
+        let mut days = None;
+        for rule in &self.0 {
+            if let Rule::Retention { days: d } = rule {
+                days = Some(*d);
+            }
+        }
+        days
+    }
+
+    /// Returns the uncommitted TTL in milliseconds, if an `uncommitted_ttl` rule is present.
+    pub fn uncommitted_ttl_ms(&self) -> Option<u64> {
+        let mut ttl = None;
+        for rule in &self.0 {
+            if let Rule::UncommittedTtl { ttl_ms } = rule {
+                ttl = Some(*ttl_ms);
+            }
+        }
+        ttl
     }
 
     /// Returns all rules (for inspection / testing).

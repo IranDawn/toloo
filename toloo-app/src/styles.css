@@ -1147,6 +1147,99 @@ button.small {
 #import-text-input:focus { border-color: var(--accent); }
 #import-text-input::placeholder { color: var(--muted); }
 
+/* ══════════════════════════════════════════════
+   PASSPHRASE SECTION
+══════════════════════════════════════════════ */
+
+.passphrase-row {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+.passphrase-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ══════════════════════════════════════════════
+   BLOCKLIST
+══════════════════════════════════════════════ */
+
+.blocklist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.blocklist-item:last-child { border-bottom: none; }
+
+.blocklist-avatar {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--border);
+}
+.blocklist-avatar svg { display: block; }
+
+.blocklist-info {
+  flex: 1;
+  min-width: 0;
+}
+.blocklist-node {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.74rem;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.blocklist-reason {
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.blocklist-unblock {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 0.73rem;
+}
+
+/* ══════════════════════════════════════════════
+   FLAG BADGE (on messages)
+══════════════════════════════════════════════ */
+
+.msg-flag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.62rem;
+  color: var(--warn);
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: rgba(224, 154, 58, 0.12);
+  margin-inline-start: 6px;
+  vertical-align: middle;
+}
+
+/* ══════════════════════════════════════════════
+   CONNECTION STATUS
+══════════════════════════════════════════════ */
+
+.net-status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-inline-end: 5px;
+  vertical-align: middle;
+}
+.net-status-dot.online  { background: var(--success); }
+.net-status-dot.offline { background: var(--danger); }
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar       { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

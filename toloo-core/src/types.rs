@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// The only top-level protocol structure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -35,18 +36,18 @@ pub struct DatumBody {
     pub extra: HashMap<String, Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct LocalNode {
     pub sig: Keypair,
     pub enc: Keypair,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct LocalRoom {
     pub sig: Keypair,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct Keypair {
     pub pub_key: String,
     pub priv_key: String,

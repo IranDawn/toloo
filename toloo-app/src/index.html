@@ -190,6 +190,19 @@
       </div>
     </div>
 
+    <div id="passphrase-section" class="sheet-section hidden">
+      <label>Passphrase Protection</label>
+      <p class="hint-text" style="text-align:start;padding:0">Encrypt your identity with a passphrase for secure storage.</p>
+      <div class="passphrase-row">
+        <input id="passphrase-input" type="password" placeholder="Enter passphrase…" autocomplete="off" />
+        <button id="btn-encrypt-save" class="secondary small">Encrypt &amp; Save</button>
+      </div>
+      <div class="passphrase-row">
+        <input id="passphrase-unlock-input" type="password" placeholder="Enter passphrase to unlock…" autocomplete="off" />
+        <button id="btn-load-encrypted" class="secondary small">Unlock</button>
+      </div>
+    </div>
+
     <div class="sheet-section">
       <label>Connected Relays</label>
       <!-- Populated by renderRelayUrls() -->
@@ -210,6 +223,12 @@
         <button data-dir="ltr">← LTR (English)</button>
         <button data-dir="rtl">RTL → (فارسی)</button>
       </div>
+    </div>
+
+    <div id="blocklist-section" class="sheet-section">
+      <label>Blocked Users</label>
+      <div id="blocklist-list"></div>
+      <div id="blocklist-empty" class="hint-text" style="padding:4px 0 0">No blocked users.</div>
     </div>
   </div>
 
@@ -424,6 +443,7 @@
 <!-- Hidden file pickers -->
 <input type="file" id="file-input"        accept=".json"         style="display:none" />
 <input type="file" id="toloo-file-input"  accept=".toloo,text/*" style="display:none" />
+<input type="file" id="encrypted-file-input" accept=".toloo-key" style="display:none" />
 
 <!-- Toast notifications -->
 <div id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>

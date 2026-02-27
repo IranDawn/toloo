@@ -181,35 +181,35 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             artifact: cli-linux-x86_64
-            binary: toloo-cli
+            binary: toloo
             musl: true
 
           # Windows x86_64 — static CRT, no MSVC redistributable needed
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: cli-windows-x86_64
-            binary: toloo-cli.exe
+            binary: toloo.exe
             musl: false
 
           # Windows ARM64 — Surface / Snapdragon, static CRT
           - os: windows-latest
             target: aarch64-pc-windows-msvc
             artifact: cli-windows-aarch64
-            binary: toloo-cli.exe
+            binary: toloo.exe
             musl: false
 
           # macOS x86_64 — no Xcode needed for a pure Rust CLI
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact: cli-macos-x86_64
-            binary: toloo-cli
+            binary: toloo
             musl: false
 
           # macOS ARM64 (Apple Silicon)
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: cli-macos-aarch64
-            binary: toloo-cli
+            binary: toloo
             musl: false
 
     steps:

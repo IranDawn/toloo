@@ -5,3 +5,4 @@ pub mod pool;
 pub mod transport;
 pub mod requests;
 pub mod discovery;
+pub mod trust;

@@ -306,6 +306,82 @@ pub fn make_private_read(sender: &LocalNode, to: &str, ids: Vec<String>) -> Resu
     Ok(env)
 }
 
+pub fn make_side_fork(
+    node: &LocalNode,
+    room_pub: &str,
+    forked_from: &str,
+    reason: Option<&str>,
+) -> Result<Envelope> {
+    let mut content = Map::new();
+    content.insert("forked_from".to_owned(), Value::String(forked_from.to_owned()));
+    if let Some(r) = reason {
+        if r.len() > MAX_REASON {
+            bail!("side.fork reason exceeds {} chars", MAX_REASON);
+        }
+        content.insert("reason".to_owned(), Value::String(r.to_owned()));
+    }
+    make_room_scoped("side.fork", node, room_pub, Some(Value::Object(content)))
+}
+
+pub fn make_side_attestation(
+    node: &LocalNode,
+    target_node: &str,
+    level: &str,
+    reason: Option<&str>,
+) -> Result<Envelope> {
+    match level {
+        "positive" | "negative" | "neutral" => {}
+        _ => bail!("side.attestation level must be positive, negative, or neutral"),
+    }
+    let mut content = Map::new();
+    content.insert("target".to_owned(), Value::String(target_node.to_owned()));
+    content.insert("level".to_owned(), Value::String(level.to_owned()));
+    if let Some(r) = reason {
+        if r.len() > MAX_REASON {
+            bail!("side.attestation reason exceeds {} chars", MAX_REASON);
+        }
+        content.insert("reason".to_owned(), Value::String(r.to_owned()));
+    }
+    let env = make_envelope("side.attestation", Some(Value::Object(content)), node, None)?;
+    validate_event_content(&env)?;
+    Ok(env)
+}
+
+pub fn make_room_flag(
+    node: &LocalNode,
+    room_pub: &str,
+    target_eid: &str,
+    category: &str,
+    reason: Option<&str>,
+) -> Result<Envelope> {
+    let mut content = Map::new();
+    content.insert("target".to_owned(), Value::String(target_eid.to_owned()));
+    content.insert("category".to_owned(), Value::String(category.to_owned()));
+    if let Some(r) = reason {
+        if r.len() > MAX_REASON {
+            bail!("room.flag reason exceeds {} chars", MAX_REASON);
+        }
+        content.insert("reason".to_owned(), Value::String(r.to_owned()));
+    }
+    make_room_scoped("room.flag", node, room_pub, Some(Value::Object(content)))
+}
+
+pub fn make_room_migrate(
+    node: &LocalNode,
+    room: &LocalRoom,
+    new_room_pub: &str,
+    reason: Option<&str>,
+) -> Result<Envelope> {
+    let mut content = Map::new();
+    content.insert("new_room".to_owned(), Value::String(new_room_pub.to_owned()));
+    if let Some(r) = reason {
+        if r.len() > MAX_REASON {
+            bail!("room.migrate reason exceeds {} chars", MAX_REASON);
+        }
+        content.insert("reason".to_owned(), Value::String(r.to_owned()));
+    }
+    make_room_scoped("room.migrate", node, &room.sig.pub_key, Some(Value::Object(content)))
+}
 
 pub fn validate_event_content(env: &Envelope) -> Result<()> {
     if env.d.t == "commit" {
@@ -339,6 +415,16 @@ pub fn validate_event_content(env: &Envelope) -> Result<()> {
         "room.blob" => validate_room_blob(d),
         "private.message" | "private.blob" => validate_private_payload(d),
         "private.read" => validate_private_read(d),
+        "side.fork" => validate_required_string_field(d, "forked_from"),
+        "side.attestation" => {
+            validate_required_string_field(d, "target")?;
+            validate_required_string_field(d, "level")
+        }
+        "room.flag" => {
+            validate_required_string_field(d, "target")?;
+            validate_required_string_field(d, "category")
+        }
+        "room.migrate" => validate_required_string_field(d, "new_room"),
         _ => Ok(()),
     }
 }
@@ -804,5 +890,61 @@ mod tests {
         };
         let bad_commit = sign_envelope(bad_commit_d, &room.sig.priv_key).expect("sign commit");
         assert!(validate_event_content(&bad_commit).is_err());
+    }
+
+    #[test]
+    fn side_fork_builder_emits_valid_shape() {
+        let node = mk_node();
+        let room = mk_room();
+        let env = super::make_side_fork(&node, &room.sig.pub_key, "some_eid", Some("test fork"))
+            .expect("side.fork builder should work");
+        assert_eq!(env.d.t, "side.fork");
+        let c = env.d.c.as_ref().unwrap();
+        assert_eq!(c.get("forked_from").and_then(|v| v.as_str()), Some("some_eid"));
+        validate_event_content(&env).expect("side.fork should validate");
+    }
+
+    #[test]
+    fn side_attestation_builder_emits_valid_shape() {
+        let node = mk_node();
+        let target = mk_node();
+        let env = super::make_side_attestation(&node, &target.sig.pub_key, "positive", Some("trusted"))
+            .expect("side.attestation builder should work");
+        assert_eq!(env.d.t, "side.attestation");
+        let c = env.d.c.as_ref().unwrap();
+        assert_eq!(c.get("level").and_then(|v| v.as_str()), Some("positive"));
+        validate_event_content(&env).expect("side.attestation should validate");
+    }
+
+    #[test]
+    fn side_attestation_rejects_invalid_level() {
+        let node = mk_node();
+        let target = mk_node();
+        assert!(super::make_side_attestation(&node, &target.sig.pub_key, "invalid", None).is_err());
+    }
+
+    #[test]
+    fn room_flag_builder_emits_valid_shape() {
+        let node = mk_node();
+        let room = mk_room();
+        let env = super::make_room_flag(&node, &room.sig.pub_key, "eid123", "spam", Some("reason"))
+            .expect("room.flag builder should work");
+        assert_eq!(env.d.t, "room.flag");
+        let c = env.d.c.as_ref().unwrap();
+        assert_eq!(c.get("category").and_then(|v| v.as_str()), Some("spam"));
+        validate_event_content(&env).expect("room.flag should validate");
+    }
+
+    #[test]
+    fn room_migrate_builder_emits_valid_shape() {
+        let node = mk_node();
+        let room = mk_room();
+        let new_room = mk_room();
+        let env = super::make_room_migrate(&node, &room, &new_room.sig.pub_key, Some("upgrading"))
+            .expect("room.migrate builder should work");
+        assert_eq!(env.d.t, "room.migrate");
+        let c = env.d.c.as_ref().unwrap();
+        assert_eq!(c.get("new_room").and_then(|v| v.as_str()), Some(new_room.sig.pub_key.as_str()));
+        validate_event_content(&env).expect("room.migrate should validate");
     }
 }
