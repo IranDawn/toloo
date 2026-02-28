@@ -17,7 +17,7 @@ clap = { version = "4", features = ["derive"] }
 
 # Async runtime and networking
 tokio             = { version = "1", features = ["full"] }
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 futures-util      = "0.3"
 
 # Encoding / serialization

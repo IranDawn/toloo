@@ -27,11 +27,11 @@ pub fn make_self_signed_acceptor(
     if hostname != "localhost"  { sans.push("localhost".to_owned()); }
     if hostname != "127.0.0.1"  { sans.push("127.0.0.1".to_owned()); }
 
-    let CertifiedKey { cert, key_pair } =
+    let CertifiedKey { cert, signing_key } =
         generate_simple_self_signed(sans).map_err(|e| format!("rcgen: {e}"))?;
 
     let cert_der: Vec<u8> = cert.der().to_vec();
-    let key_der:  Vec<u8> = key_pair.serialize_der();
+    let key_der:  Vec<u8> = signing_key.serialize_der();
 
     // SHA-256 fingerprint (hex) for client-side pinning.
     let fingerprint = format!("{:x}", Sha256::digest(&cert_der));

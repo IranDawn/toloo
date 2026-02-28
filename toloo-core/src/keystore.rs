@@ -81,15 +81,15 @@ fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
 
 fn generate_salt() -> [u8; SALT_LEN] {
     let mut salt = [0u8; SALT_LEN];
-    use rand::RngCore;
-    rand::rngs::OsRng.fill_bytes(&mut salt);
+    use rand_core::{OsRng, RngCore};
+    OsRng.fill_bytes(&mut salt);
     salt
 }
 
 fn generate_nonce() -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
-    use rand::RngCore;
-    rand::rngs::OsRng.fill_bytes(&mut nonce);
+    use rand_core::{OsRng, RngCore};
+    OsRng.fill_bytes(&mut nonce);
     nonce
 }
 

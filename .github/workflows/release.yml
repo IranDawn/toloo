@@ -73,7 +73,6 @@ jobs:
             target: android
             artifact: android-tauri
             android: tauri
-            ndk: 27.0.12077973
 
     steps:
       - uses: actions/checkout@v4
@@ -112,10 +111,9 @@ jobs:
       - name: Setup Android SDK
         if: matrix.android == 'tauri'
         uses: android-actions/setup-android@v3
-
-      - name: Install NDK
-        if: matrix.android == 'tauri'
-        run: sdkmanager "ndk;${{ matrix.ndk }}"
+        with:
+          # Only install what the build actually needs — no emulator
+          packages: "platform-tools"
 
       - name: Add Android Rust targets
         if: matrix.android == 'tauri'
@@ -127,7 +125,7 @@ jobs:
             i686-linux-android
 
       # ── Tauri CLI ────────────────────────────────────────────────────
-      - uses: cargo-bins/cargo-binstall@main
+      - uses: cargo-bins/cargo-binstall@v1.17.5
       - name: Install Tauri CLI
         run: cargo binstall --no-confirm tauri-cli --version "^2"
 
@@ -135,8 +133,25 @@ jobs:
         if: matrix.android == 'tauri'
         run: cargo tauri android init
         working-directory: toloo-app
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ matrix.ndk }}
+
+      - name: Patch BuildTask.kt — suppress deprecated exec() warning
+        if: matrix.android == 'tauri'
+        run: |
+          python3 - << 'PYEOF'
+          import pathlib, re
+          matches = list(pathlib.Path("toloo-app/src-tauri/gen/android").rglob("BuildTask.kt"))
+          if not matches:
+              raise FileNotFoundError("BuildTask.kt not found under gen/android")
+          f = matches[0]
+          src = f.read_text()
+          # project.exec is deprecated in Gradle 8+; suppress the warning
+          # until Tauri upstream migrates to ExecOperations injection.
+          src = src.replace(
+              "        project.exec {",
+              "        @Suppress(\"DEPRECATION\")\n        project.exec {",
+          )
+          f.write_text(src)
+          PYEOF
 
       - name: Setup Android app icons
         if: matrix.android == 'tauri'
@@ -293,7 +308,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\tauri
-          key: tauri-bundler-tools
+          key: tauri-bundler-tools-${{ matrix.artifact }}
 
       # ── Build ──────────────────────────────────────────────────────
       - name: Build (desktop)
@@ -313,8 +328,6 @@ jobs:
         if: matrix.android == 'tauri' && needs.check-android-signing.outputs.android == 'true'
         run: cargo tauri android build --apk
         working-directory: toloo-app
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ matrix.ndk }}
 
       # ── Collect artifacts ─────────────────────────────────────────
       - name: Collect artifacts (Linux)
@@ -419,6 +432,13 @@ jobs:
       - name: Install musl tools
         if: matrix.musl == true
         run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Cache pip packages (Zig cross toolchain)
+        if: matrix.musl_cross == true
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-ziglang-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install cargo-zigbuild (aarch64 musl cross)
         if: matrix.musl_cross == true

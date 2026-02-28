@@ -7,7 +7,7 @@
 use toloo_core::base64url;
 use toloo_core::canonical::canonical;
 use toloo_core::crypto::{ed25519_generate, x25519_generate};
-use toloo_core::envelope::{depth, innermost, parse_envelope, verify_chain};
+use toloo_core::envelope::{depth, parse_envelope, verify_chain};
 use toloo_core::events::{
     make_node_meta as core_make_node_meta, make_private_message as core_make_private_message,
     make_private_read as core_make_private_read, make_room_ban as core_make_room_ban,
@@ -23,7 +23,7 @@ use toloo_core::private::{
     decrypt_private as core_decrypt_private, encrypt_private as core_encrypt_private,
     PrivateCiphertext as CorePrivateCiphertext,
 };
-use toloo_core::types::{Envelope, Keypair as CoreKeypair, LocalNode, LocalRoom};
+use toloo_core::types::{Envelope, LocalNode, LocalRoom};
 use toloo_lib::discovery::{decode as core_decode, encode_file as core_encode_file, encode_uri as core_encode_uri};
 
 uniffi::include_scaffolding!("toloo");

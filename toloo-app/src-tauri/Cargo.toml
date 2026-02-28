@@ -19,7 +19,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 toloo-core = { path = "../../toloo-core" }
 toloo-lib  = { path = "../../toloo-lib" }
-rusqlite   = { version = "0.31", features = ["bundled"] }
+rusqlite   = { version = "0.38", features = ["bundled"] }
 
 tauri        = { version = "2" }
 serde        = { version = "1", features = ["derive"] }
