@@ -124,6 +124,44 @@ function toast(msg, type = "info", ms = 3800) {
 
 
 // ══════════════════════════════════════════════════════════════════════
+// OS notifications (Tauri-native with Web Notifications API fallback)
+// ══════════════════════════════════════════════════════════════════════
+
+// Permission is requested lazily on first call and cached here.
+let _notifyPermission = null;
+
+async function notify(title, body = "") {
+  // ── Tauri native path ──────────────────────────────────────────────
+  if (IS_TAURI) {
+    const n = window.__TAURI_PLUGIN_NOTIFICATION__;
+    if (n) {
+      if (_notifyPermission === null) {
+        _notifyPermission = await n.isPermissionGranted();
+        if (!_notifyPermission) {
+          const result = await n.requestPermission();
+          _notifyPermission = result === "granted";
+        }
+      }
+      if (_notifyPermission) {
+        n.sendNotification({ title, body });
+      }
+      return;
+    }
+  }
+
+  // ── Web Notifications API fallback (browser / toloo.min.js) ───────
+  if (!("Notification" in window)) return;
+  if (_notifyPermission === null) {
+    const result = await Notification.requestPermission();
+    _notifyPermission = result === "granted";
+  }
+  if (_notifyPermission) {
+    new Notification(title, { body });
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
 // DOM shortcuts
 // ══════════════════════════════════════════════════════════════════════
 
