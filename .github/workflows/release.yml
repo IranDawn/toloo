@@ -126,6 +126,8 @@ jobs:
 
       # ── Tauri CLI ────────────────────────────────────────────────────
       - uses: cargo-bins/cargo-binstall@v1.17.5
+        env:
+          BINSTALL_VERSION: "1.17.5"
       - name: Install Tauri CLI
         run: cargo binstall --no-confirm tauri-cli --version "^2"
 
@@ -438,7 +440,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-ziglang-${{ runner.os }}-${{ runner.arch }}
+          key: pip-ziglang-${{ runner.os }}-${{ runner.arch }}-zig0.15-zigbuild0.19
 
       - name: Install cargo-zigbuild (aarch64 musl cross)
         if: matrix.musl_cross == true
